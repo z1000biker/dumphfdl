@@ -71,6 +71,9 @@ set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_REQUIRED_LIBRARIES} ${LIQUIDDSP_LIBRARIES})
 set(LIQUID_VERSION_MIN "1.3.0")
 set(LIQUID_VERSION_NUMBER_MIN 1003000)
 set(LIQUID_VERSION_NUMBER_MAX 1999999)
+if(CMAKE_CROSSCOMPILING)
+	set(LIQUIDDSP_VERSION_CHECK TRUE)
+else()
 check_c_source_runs("
 #include <stdio.h>
 #include <liquid/liquid.h>
@@ -93,6 +96,7 @@ int main()
 	}
 	return 0;
 }" LIQUIDDSP_VERSION_CHECK)
+endif()
 if(LIQUIDDSP_VERSION_CHECK)
 	list(APPEND dumphfdl_extra_libs ${LIQUIDDSP_LIBRARIES})
 	list(APPEND dumphfdl_include_dirs ${LIQUIDDSP_INCLUDE_DIR})
@@ -121,17 +125,12 @@ else()
 	message(FATAL_ERROR "Unknown FFT library: ${FFT_LIBRARY}")
 endif()
 
-pkg_check_modules(GLIB2 REQUIRED glib-2.0>=2.46)
-list(APPEND dumphfdl_extra_libs ${GLIB2_LIBRARIES})
-list(APPEND dumphfdl_include_dirs ${GLIB2_INCLUDE_DIRS})
-list(APPEND link_dirs ${GLIB2_LIBRARY_DIRS})
-
 pkg_check_modules(ACARS REQUIRED libacars-2>=2.1.0)
 list(APPEND dumphfdl_extra_libs ${ACARS_LIBRARIES})
 list(APPEND dumphfdl_include_dirs ${ACARS_INCLUDE_DIRS})
 list(APPEND link_dirs ${ACARS_LIBRARY_DIRS})
 
-pkg_check_modules(CONFIG REQUIRED libconfig++)
+pkg_check_modules(CONFIG REQUIRED libconfig)
 list(APPEND dumphfdl_extra_libs ${CONFIG_LIBRARIES})
 list(APPEND dumphfdl_include_dirs ${CONFIG_INCLUDE_DIRS})
 list(APPEND link_dirs ${CONFIG_LIBRARY_DIRS})
@@ -258,6 +257,7 @@ add_library (dumphfdl_base OBJECT
 	ac_cache.c
 	ac_data.c
 	acars.c
+	async_queue.c
 	block.c
 	cache.c
 	crc.c
@@ -289,6 +289,7 @@ add_library (dumphfdl_base OBJECT
 	spdu.c
 	systable.c
 	util.c
+	win32_compat.c
 	${CMAKE_CURRENT_BINARY_DIR}/version.c
 	${dumphfdl_extra_sources}
 )
@@ -312,6 +313,10 @@ target_link_libraries (dumphfdl
 	pthread
 	${dumphfdl_extra_libs}
 )
+
+if(WIN32)
+	target_link_libraries(dumphfdl ws2_32)
+endif()
 
 install(TARGETS dumphfdl
 	RUNTIME DESTINATION bin

@@ -23,7 +23,8 @@ static la_vstring *format_timestamp(struct timeval tv) {
 		    tv.tv_sec++;
 		}
 	}
-	struct tm *tmstruct = (Config.utc == true ? gmtime(&tv.tv_sec) : localtime(&tv.tv_sec));
+	time_t seconds = (time_t)tv.tv_sec;
+	struct tm *tmstruct = (Config.utc == true ? gmtime(&seconds) : localtime(&seconds));
 
 	char tbuf[30], tzbuf[8];
 	strftime(tbuf, sizeof(tbuf), "%F %T", tmstruct);

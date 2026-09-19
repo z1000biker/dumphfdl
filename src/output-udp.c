@@ -3,17 +3,39 @@
 #include <string.h>                     // strdup, strerror
 #include <unistd.h>                     // close
 #include <errno.h>                      // errno
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/types.h>                  // socket, connect
 #include <sys/socket.h>                 // socket, connect
 #include <netdb.h>                      // getaddrinfo
+#endif
 #include "output-common.h"              // output_descriptor_t, output_qentry_t, output_queue_drain
 #include "kvargs.h"                     // kvargs, option_descr_t
 #include "util.h"                       // ASSERT
 
+#ifdef _WIN32
+typedef SOCKET output_socket_t;
+#define OUTPUT_INVALID_SOCKET INVALID_SOCKET
+#define output_socket_close closesocket
+static int output_socket_send(output_socket_t sock, void const *buf, size_t len) {
+	return send(sock, (char const *)buf, (int)len, 0);
+}
+#else
+typedef int output_socket_t;
+#define OUTPUT_INVALID_SOCKET (-1)
+#define SOCKET_ERROR (-1)
+#define output_socket_close close
+static ssize_t output_socket_send(output_socket_t sock, void const *buf, size_t len) {
+	return write(sock, buf, len);
+}
+#endif
+
 typedef struct {
 	char *address;
 	char *port;
-	int sockfd;
+	output_socket_t sockfd;
 } out_udp_ctx_t;
 
 static bool out_udp_supports_format(output_format_t format) {
@@ -33,6 +55,7 @@ static void *out_udp_configure(kvargs *kv) {
 		goto fail;
 	}
 	cfg->port = strdup(kvargs_get(kv, "port"));
+	cfg->sockfd = OUTPUT_INVALID_SOCKET;
 	return cfg;
 fail:
 	XFREE(cfg);
@@ -42,6 +65,13 @@ fail:
 static int out_udp_init(void *selfptr) {
 	ASSERT(selfptr != NULL);
 	out_udp_ctx_t *self = selfptr;
+
+#ifdef _WIN32
+	if(dumphfdl_winsock_init() != 0) {
+		fprintf(stderr, "output_udp: WSAStartup failed\n");
+		return -1;
+	}
+#endif
 
 	struct addrinfo hints, *result, *rptr;
 	memset(&hints, 0, sizeof(struct addrinfo));
@@ -56,19 +86,19 @@ static int out_udp_init(void *selfptr) {
 	}
 	for (rptr = result; rptr != NULL; rptr = rptr->ai_next) {
 		self->sockfd = socket(rptr->ai_family, rptr->ai_socktype, rptr->ai_protocol);
-		if(self->sockfd == -1) {
+		if(self->sockfd == OUTPUT_INVALID_SOCKET) {
 			continue;
 		}
-		if(connect(self->sockfd, rptr->ai_addr, rptr->ai_addrlen) != -1) {
+		if(connect(self->sockfd, rptr->ai_addr, (int)rptr->ai_addrlen) != SOCKET_ERROR) {
 			break;
 		}
-		close(self->sockfd);
-		self->sockfd = 0;
+		output_socket_close(self->sockfd);
+		self->sockfd = OUTPUT_INVALID_SOCKET;
 	}
 	if (rptr == NULL) {
 		fprintf(stderr, "output_udp: Could not set up UDP socket to %s:%s: all addresses failed\n",
 				self->address, self->port);
-		self->sockfd = 0;
+		self->sockfd = OUTPUT_INVALID_SOCKET;
 		return -1;
 	}
 	freeaddrinfo(result);
@@ -78,11 +108,11 @@ static int out_udp_init(void *selfptr) {
 static int out_udp_produce_text(out_udp_ctx_t *self, struct metadata *metadata, struct octet_string *msg) {
 	UNUSED(metadata);
 	ASSERT(msg != NULL);
-	ASSERT(self->sockfd != 0);
+	ASSERT(self->sockfd != OUTPUT_INVALID_SOCKET);
 	if(msg->len < 2) {
 		return 0;
 	}
-	if(write(self->sockfd, msg->buf, msg->len) < 0) {
+	if(output_socket_send(self->sockfd, msg->buf, msg->len) < 0) {
 		return -1;
 	}
 	return 0;
@@ -110,7 +140,9 @@ static void out_udp_handle_shutdown(void *selfptr) {
 	ASSERT(selfptr != NULL);
 	out_udp_ctx_t *self = selfptr;
 	fprintf(stderr, "output_udp(%s:%s): shutting down\n", self->address, self->port);
-	close(self->sockfd);
+	if(self->sockfd != OUTPUT_INVALID_SOCKET) {
+		output_socket_close(self->sockfd);
+	}
 }
 
 static void out_udp_handle_failure(void *selfptr) {
@@ -118,7 +150,9 @@ static void out_udp_handle_failure(void *selfptr) {
 	out_udp_ctx_t *self = selfptr;
 	fprintf(stderr, "output_udp: can't connect to %s:%s, deactivating output\n",
 			self->address, self->port);
-	close(self->sockfd);
+	if(self->sockfd != OUTPUT_INVALID_SOCKET) {
+		output_socket_close(self->sockfd);
+	}
 }
 
 static const option_descr_t out_udp_options[] = {

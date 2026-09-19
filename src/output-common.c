@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <string.h>             // memset, strcmp, strdup
 #include <unistd.h>             // sleep
-#include <glib.h>               // g_async_queue_new
+#include "async_queue.h"
 #include <libacars/dict.h>      // la_dict
 #include "config.h"             // WITH_*
 #include "util.h"               // NEW, ASSERT

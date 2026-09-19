@@ -9,6 +9,7 @@
 #include <libacars/vstring.h>       // la_vstring
 #include "globals.h"                // Config
 #include "config.h"
+#include "win32_compat.h"
 #ifndef HAVE_PTHREAD_BARRIERS
 #include "pthread_barrier.h"
 #endif
@@ -97,7 +98,9 @@
 #define NEW(type, x) type *(x) = XCALLOC(1, sizeof(type))
 #define UNUSED(x) (void)(x)
 #define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
+#ifndef max
 #define max(a, b) ((a) > (b) ? (a) : (b))
+#endif
 #define EOL(x) la_vstring_append_sprintf((x), "%s", "\n")
 #define HZ_TO_KHZ(f) ((f) / 1000.0)
 

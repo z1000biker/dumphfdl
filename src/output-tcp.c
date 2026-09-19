@@ -5,9 +5,14 @@
 #include <errno.h>                      // errno
 #include <sys/time.h>                   // struct timeval
 #include <time.h>                       // time_t, time
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <sys/types.h>                  // socket, connect
 #include <sys/socket.h>                 // socket, connect
 #include <netdb.h>                      // getaddrinfo
+#endif
 #include "output-common.h"              // output_descriptor_t, output_qentry_t, output_queue_drain
 #include "kvargs.h"                     // kvargs, option_descr_t
 #include "util.h"                       // ASSERT
@@ -18,6 +23,23 @@
 // Send socket operations timeout
 #define SOCKET_SEND_TIMEOUT 5
 
+#ifdef _WIN32
+typedef SOCKET output_socket_t;
+#define OUTPUT_INVALID_SOCKET INVALID_SOCKET
+#define output_socket_close closesocket
+static int output_socket_send(output_socket_t sock, void const *buf, size_t len) {
+	return send(sock, (char const *)buf, (int)len, 0);
+}
+#else
+typedef int output_socket_t;
+#define OUTPUT_INVALID_SOCKET (-1)
+#define SOCKET_ERROR (-1)
+#define output_socket_close close
+static ssize_t output_socket_send(output_socket_t sock, void const *buf, size_t len) {
+	return write(sock, buf, len);
+}
+#endif
+
 // Forward declarations
 static void out_tcp_handle_shutdown(void *selfptr);
 
@@ -25,7 +47,7 @@ typedef struct {
 	char *address;
 	char *port;
 	time_t next_reconnect_time;
-	int32_t sockfd;
+	output_socket_t sockfd;
 } out_tcp_ctx_t;
 
 static bool out_tcp_supports_format(output_format_t format) {
@@ -45,6 +67,7 @@ static void *out_tcp_configure(kvargs *kv) {
 		goto fail;
 	}
 	cfg->port = strdup(kvargs_get(kv, "port"));
+	cfg->sockfd = OUTPUT_INVALID_SOCKET;
 	return cfg;
 fail:
 	XFREE(cfg);
@@ -64,10 +87,19 @@ static int32_t out_tcp_reconnect(void *selfptr) {
 	ASSERT(selfptr != NULL);
 	out_tcp_ctx_t *self = selfptr;
 
+#ifdef _WIN32
+	if(dumphfdl_winsock_init() != 0) {
+		fprintf(stderr, "output_tcp: WSAStartup failed\n");
+		return -1;
+	}
+#endif
+
 	if(self->next_reconnect_time > time(NULL)) {
 		return -1;
 	}
+	#ifndef _WIN32
 	static struct timeval const timeout = { .tv_sec = SOCKET_SEND_TIMEOUT, .tv_usec = 0 };
+	#endif
 	struct addrinfo hints, *result, *rptr;
 	memset(&hints, 0, sizeof(struct addrinfo));
 	hints.ai_family = AF_UNSPEC;
@@ -83,26 +115,31 @@ static int32_t out_tcp_reconnect(void *selfptr) {
 	}
 	for (rptr = result; rptr != NULL; rptr = rptr->ai_next) {
 		self->sockfd = socket(rptr->ai_family, rptr->ai_socktype, rptr->ai_protocol);
-		if(self->sockfd == -1) {
+		if(self->sockfd == OUTPUT_INVALID_SOCKET) {
 			continue;
 		}
+		#ifdef _WIN32
+		DWORD timeout = SOCKET_SEND_TIMEOUT * 1000;
+		if(setsockopt(self->sockfd, SOL_SOCKET, SO_SNDTIMEO, (char const *)&timeout, sizeof(timeout)) == SOCKET_ERROR) {
+		#else
 		if(setsockopt(self->sockfd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
+		#endif
 			fprintf(stderr, "output_tcp(%s:%s): could not set timeout on socket: %s\n",
 					self->address, self->port, strerror(errno));
 		}
 
-		if(connect(self->sockfd, rptr->ai_addr, rptr->ai_addrlen) != -1) {
+		if(connect(self->sockfd, rptr->ai_addr, (int)rptr->ai_addrlen) != SOCKET_ERROR) {
 			fprintf(stderr, "output_tcp(%s:%s): connection established\n",
 					self->address, self->port);
 			break;
 		}
-		close(self->sockfd);
-		self->sockfd = 0;
+		output_socket_close(self->sockfd);
+		self->sockfd = OUTPUT_INVALID_SOCKET;
 	}
 	if (rptr == NULL) {
 		fprintf(stderr, "output_tcp(%s:%s): could not connect: all addresses failed\n",
 				self->address, self->port);
-		self->sockfd = 0;
+		self->sockfd = OUTPUT_INVALID_SOCKET;
 		goto fail;
 	}
 	freeaddrinfo(result);
@@ -128,11 +165,11 @@ static int32_t out_tcp_init(void *selfptr) {
 static int32_t out_tcp_produce_text(out_tcp_ctx_t *self, struct metadata *metadata, struct octet_string *msg) {
 	UNUSED(metadata);
 	ASSERT(msg != NULL);
-	ASSERT(self->sockfd != 0);
+	ASSERT(self->sockfd != OUTPUT_INVALID_SOCKET);
 	if(msg->len < 1) {
 		return 0;
 	}
-	if(write(self->sockfd, msg->buf, msg->len) < 0) {
+	if(output_socket_send(self->sockfd, msg->buf, msg->len) < 0) {
 		return -1;
 	}
 	return 0;
@@ -142,7 +179,7 @@ static int32_t out_tcp_produce(void *selfptr, output_format_t format, struct met
 	ASSERT(selfptr != NULL);
 	out_tcp_ctx_t *self = selfptr;
 	int32_t result = 0;
-	if(self->sockfd == 0) {         // No connection?
+	if(self->sockfd == OUTPUT_INVALID_SOCKET) {         // No connection?
 		if(out_tcp_reconnect(selfptr) < 0) {
 			// Return success - this causes the message to be dropped silently.
 			// Can't requeue it here, because if the problem is permanent, then
@@ -169,8 +206,10 @@ static int32_t out_tcp_produce(void *selfptr, output_format_t format, struct met
 static void out_tcp_handle_shutdown(void *selfptr) {
 	ASSERT(selfptr != NULL);
 	out_tcp_ctx_t *self = selfptr;
-	close(self->sockfd);
-	self->sockfd = 0;
+	if(self->sockfd != OUTPUT_INVALID_SOCKET) {
+		output_socket_close(self->sockfd);
+	}
+	self->sockfd = OUTPUT_INVALID_SOCKET;
 	fprintf(stderr, "output_tcp(%s:%s): connection closed\n", self->address, self->port);
 }
 
@@ -179,8 +218,10 @@ static void out_tcp_handle_failure(void *selfptr) {
 	out_tcp_ctx_t *self = selfptr;
 	fprintf(stderr, "output_tcp(%s:%s): could not connect, deactivating output\n",
 			self->address, self->port);
-	close(self->sockfd);
-	self->sockfd = 0;
+	if(self->sockfd != OUTPUT_INVALID_SOCKET) {
+		output_socket_close(self->sockfd);
+	}
+	self->sockfd = OUTPUT_INVALID_SOCKET;
 }
 
 static const option_descr_t out_tcp_options[] = {

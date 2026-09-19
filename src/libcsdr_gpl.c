@@ -22,6 +22,7 @@ This file is part of libcsdr.
 
 #include <math.h>               // M_PI
 #include "libcsdr_gpl.h"
+#include "win32_compat.h"
 
 shift_addition_data_t shift_addition_init(float rate)
 {

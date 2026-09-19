@@ -3,7 +3,11 @@
 #include <string.h>                     // strcmp, strdup, strerror
 #include <time.h>                       // gmtime_r, localtime_r, strftime
 #include <errno.h>                      // errno
+#ifdef _WIN32
+#include <winsock2.h>                   // htons
+#else
 #include <arpa/inet.h>                  // htons
+#endif
 #include "output-common.h"              // output_descriptor_t, output_qentry_t, output_queue_drain
 #include "output-file.h"                // OUT_BINARY_FRAME_LEN_OCTETS, OUT_BINARY_FRAME_LEN_MAX
 #include "kvargs.h"                     // kvargs

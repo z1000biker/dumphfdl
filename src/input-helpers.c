@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <limits.h>             // SHRT_MAX, SCHAR_MAX, UCHAR_MAX
 #include <complex.h>            // CMPLXF
+#ifndef CMPLXF
+#define CMPLXF(re, im) ((float complex)((float)(re) + I * (float)(im)))
+#endif
 #include <strings.h>            // strcasecmp()
 #include <pthread.h>            // pthread_*
 #include <liquid/liquid.h>      // cbuffercf_*
