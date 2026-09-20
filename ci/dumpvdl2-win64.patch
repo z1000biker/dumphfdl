@@ -1,0 +1,64 @@
+diff --git a/src/dumpvdl2.c b/src/dumpvdl2.c
+index 8b722e0..0000000 100644
+--- a/src/dumpvdl2.c
++++ b/src/dumpvdl2.c
+@@ -54,6 +54,39 @@
+ #endif
+ #include "gs_data.h"
+ 
++#ifdef _WIN32
++static char *win_strsep(char **stringp, const char *delim) {
++	char *start, *p;
++	if(stringp == NULL || *stringp == NULL) {
++		return NULL;
++	}
++	start = *stringp;
++	p = start + strcspn(start, delim);
++	if(*p != '\0') {
++		*p = '\0';
++		*stringp = p + 1;
++	} else {
++		*stringp = NULL;
++	}
++	return start;
++}
++
++static char *win_strndup(const char *s, size_t n) {
++	size_t len = strlen(s);
++	if(len > n) {
++		len = n;
++	}
++	char *copy = malloc(len + 1);
++	if(copy == NULL) {
++		return NULL;
++	}
++	memcpy(copy, s, len);
++	copy[len] = '\0';
++	return copy;
++}
++
++#define strsep win_strsep
++#define strndup win_strndup
++#endif
++
+ int do_exit = 0;
+ dumpvdl2_config_t Config;
+ 
+@@ -92,6 +125,10 @@ void sighandler(int sig) {
+ }
+ 
+ static void setup_signals() {
++#ifdef _WIN32
++	signal(SIGINT, sighandler);
++	signal(SIGTERM, sighandler);
++#else
+ 	struct sigaction sigact, pipeact;
+ 
+ 	memset(&sigact, 0, sizeof(sigact));
+@@ -104,6 +141,7 @@ static void setup_signals() {
+ 	sigaction(SIGQUIT, &sigact, NULL);
+ 	sigaction(SIGTERM, &sigact, NULL);
++#endif
+ }
+ 
+ static void pthread_barrier_new(pthread_barrier_t *barrier, unsigned count) {
