@@ -32,6 +32,7 @@ jobs:
             sqlite3:p
             zeromq:p
             protobuf-c:p
+            python:p
 
       - name: Build libacars 2.2.1
         shell: msys2 {0}
@@ -52,7 +53,7 @@ jobs:
           cd "$RUNNER_TEMP"
           git clone --depth 1 --branch v2.7.0 https://github.com/szpajder/dumpvdl2.git
           cd dumpvdl2
-          git apply "$GITHUB_WORKSPACE/ci/dumpvdl2-win64.patch"
+          python "$GITHUB_WORKSPACE/ci/patch_dumpvdl2_windows.py"
 
       - name: Configure and build dumpvdl2
         shell: msys2 {0}
