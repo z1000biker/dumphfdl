@@ -1,0 +1,83 @@
+name: Build dumpvdl2 Windows x64
+
+on:
+  push:
+    branches:
+      - build-dumpvdl2-win64
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Set up MSYS2 MinGW64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-glib2
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-libxml2
+            mingw-w64-x86_64-jansson
+            mingw-w64-x86_64-libusb
+            mingw-w64-x86_64-rtl-sdr
+
+      - name: Build libacars 2.2.1
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch v2.2.1 https://github.com/szpajder/libacars.git
+          cmake -S libacars -B libacars/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/mingw64
+          cmake --build libacars/build --parallel
+          cmake --install libacars/build
+
+      - name: Build dumpvdl2 2.7.0 with RTL-SDR
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          git clone --depth 1 --branch v2.7.0 https://github.com/szpajder/dumpvdl2.git
+          cmake -S dumpvdl2 -B dumpvdl2/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DRTLSDR=TRUE \
+            -DMIRISDR=FALSE \
+            -DSDRPLAY=FALSE \
+            -DSDRPLAY3=FALSE \
+            -DSOAPYSDR=FALSE \
+            -DSQLITE=FALSE \
+            -DETSY_STATSD=FALSE \
+            -DRAW_BINARY_FORMAT=FALSE \
+            -DZMQ=FALSE
+          cmake --build dumpvdl2/build --parallel
+
+      - name: Assemble portable package
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          mkdir -p package
+          cp dumpvdl2/build/src/dumpvdl2.exe package/
+          ldd dumpvdl2/build/src/dumpvdl2.exe | tee package/dependencies.txt
+          for dll in $(ldd dumpvdl2/build/src/dumpvdl2.exe | awk '/\/mingw64\/bin\// {print $3}'); do
+            cp -n "$dll" package/ || true
+          done
+          cp dumpvdl2/LICENSE package/LICENSE-dumpvdl2.txt
+          cp libacars/LICENSE package/LICENSE-libacars.txt
+          dumpvdl2/build/src/dumpvdl2.exe --help > package/help.txt || true
+          sha256sum package/dumpvdl2.exe > package/SHA256SUMS.txt
+          ls -lah package
+
+      - name: Upload Windows x64 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: dumpvdl2-2.7.0-windows-x64
+          path: package/
+          if-no-files-found: error
