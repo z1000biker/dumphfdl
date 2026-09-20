@@ -80,12 +80,12 @@ jobs:
             [ -f "$dll" ] && cp -n "$dll" dist/
           done
           cp README.md LICENSE dist/
-          cat > dist/WINDOWS-X64.txt <<'EOF'
-dumpvdl2 2.7.0 - Windows x64 (UCRT64)
-Built from upstream tag v2.7.0.
-Enabled: RTL-SDR, SQLite, ZeroMQ, raw binary format (protobuf-c).
-Disabled: Mirics, SDRPlay native APIs, SoapySDR, Etsy StatsD.
-EOF
+          printf '%s\n' \
+            'dumpvdl2 2.7.0 - Windows x64 (UCRT64)' \
+            'Built from upstream tag v2.7.0.' \
+            'Enabled: RTL-SDR, SQLite, ZeroMQ, raw binary format (protobuf-c).' \
+            'Disabled: Mirics, SDRPlay native APIs, SoapySDR, Etsy StatsD.' \
+            > dist/WINDOWS-X64.txt
           file dist/dumpvdl2.exe | tee dist/file-info.txt
           /usr/bin/sha256sum dist/dumpvdl2.exe | tee dist/SHA256SUMS.txt
 
@@ -94,9 +94,10 @@ EOF
         run: |
           set -euxo pipefail
           cd "$RUNNER_TEMP/dumpvdl2/dist"
+          rc=0
           ./dumpvdl2.exe --help > help.txt 2>&1 || rc=$?
           cat help.txt
-          test "${rc:-0}" -eq 0
+          test "$rc" -eq 0
 
       - name: Upload Windows x64 artifact
         uses: actions/upload-artifact@v4
