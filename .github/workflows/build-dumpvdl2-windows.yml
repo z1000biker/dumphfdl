@@ -10,6 +10,9 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
+      - name: Checkout build patch
+        uses: actions/checkout@v4
+
       - name: Set up MSYS2 UCRT64
         uses: msys2/setup-msys2@v2
         with:
@@ -42,12 +45,14 @@ jobs:
           cmake --build libacars/build
           cmake --install libacars/build
 
-      - name: Clone dumpvdl2 2.7.0
+      - name: Clone and patch dumpvdl2 2.7.0
         shell: msys2 {0}
         run: |
           set -euxo pipefail
           cd "$RUNNER_TEMP"
           git clone --depth 1 --branch v2.7.0 https://github.com/szpajder/dumpvdl2.git
+          cd dumpvdl2
+          git apply "$GITHUB_WORKSPACE/ci/dumpvdl2-win64.patch"
 
       - name: Configure and build dumpvdl2
         shell: msys2 {0}
