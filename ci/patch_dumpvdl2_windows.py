@@ -68,6 +68,31 @@ s, n = pattern.subn(replacement, s, count=1)
 if n != 1: raise SystemExit(f"setup_signals replacement count={n}")
 save(p, s)
 
+# kvargs.c: second upstream use of POSIX strsep.
+p, s = load("src/kvargs.c")
+marker_kv = '#include "kvargs.h"\n'
+compat_kv = r'''
+#ifdef _WIN32
+static char *win_kv_strsep(char **stringp, const char *delim) {
+    char *start, *q;
+    if(stringp == NULL || *stringp == NULL) return NULL;
+    start = *stringp;
+    q = start + strcspn(start, delim);
+    if(*q != '\0') {
+        *q = '\0';
+        *stringp = q + 1;
+    } else {
+        *stringp = NULL;
+    }
+    return start;
+}
+#define strsep win_kv_strsep
+#endif
+'''
+if marker_kv not in s: raise SystemExit("kvargs include marker not found")
+s = s.replace(marker_kv, marker_kv + compat_kv + "\n", 1)
+save(p, s)
+
 # fmtr-text.c: Windows time_t is 64-bit while timeval.tv_sec is long in MinGW.
 p, s = load("src/fmtr-text.c")
 old = '''static la_vstring *format_timestamp(struct timeval tv) {
