@@ -38,3 +38,10 @@ s = s.replace("""    } else if (_q->type == LIQUID_TIMER_RUSAGE) {
 """)
 p.write_text(s, encoding="utf-8", newline="\n")
 print("Patched liquid-dsp timer.c for Windows")
+
+
+cm = Path("CMakeLists.txt")
+c = cm.read_text(encoding="utf-8")
+old = "    target_link_libraries(${target} c m)\\n"
+new = """    if(WIN32)\n        target_link_libraries(${target} m)\n    else()\n        target_link_libraries(${target} c m)\n    endif()\n"""
+if old not in c:\n    raise SystemExit("liquid-dsp CMake target_link_libraries marker not found")\nc = c.replace(old, new, 1)\ncm.write_text(c, encoding="utf-8", newline="\\n")\nprint("Patched liquid-dsp CMake libc link for Windows")\n
