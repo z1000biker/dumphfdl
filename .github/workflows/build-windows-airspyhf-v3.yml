@@ -33,8 +33,17 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
             mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-soapysdr
             mingw-w64-x86_64-libusb
+
+      - name: Build SoapySDR 0.8.1
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cd "$RUNNER_TEMP"
+          git clone --depth 1 --branch soapy-sdr-0.8.1 https://github.com/pothosware/SoapySDR.git
+          cmake -S SoapySDR -B soapysdr-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 -DENABLE_PYTHON=OFF -DENABLE_PYTHON3=OFF
+          cmake --build soapysdr-build
+          cmake --install soapysdr-build
 
       - name: Download known-good Windows package
         shell: powershell
@@ -80,6 +89,9 @@ jobs:
           MODDIR="$PKG/SoapySDR/modules0.8"
           mkdir -p "$MODDIR"
 
+          cp -f /mingw64/bin/SoapySDRUtil.exe "$PKG/"
+          cp -f /mingw64/bin/libSoapySDR.dll "$PKG/"
+
           AIRSPY_MODULE="$(find /mingw64/lib/SoapySDR/modules0.8 -maxdepth 1 -type f -iname '*airspyhf*.dll' | head -n1)"
           test -n "$AIRSPY_MODULE"
           cp -f "$AIRSPY_MODULE" "$MODDIR/"
@@ -99,6 +111,8 @@ jobs:
           }
 
           copy_deps "$AIRSPY_MODULE"
+          copy_deps /mingw64/bin/SoapySDRUtil.exe
+          copy_deps /mingw64/bin/libSoapySDR.dll
           for dll in "$PKG"/*.dll; do
             [[ -f "$dll" ]] || continue
             copy_deps "$dll"
