@@ -86,11 +86,19 @@ jobs:
               $env:PATH = "$PWD;$env:PATH"
               $env:SOAPY_SDR_PLUGIN_PATH = Join-Path $PWD "SoapySDR\modules0.8"
 
-              & .\dumphfdl.exe --help *> "$env:RUNNER_TEMP\dumphfdl-help.txt"
-              if ($LASTEXITCODE -ne 0) { throw "dumphfdl.exe --help failed after timestamp patch" }
+              $oldEap = $ErrorActionPreference
+              $ErrorActionPreference = "Continue"
 
-              & .\SoapySDRUtil.exe --info *> "$env:RUNNER_TEMP\soapy-info.txt"
-              if ($LASTEXITCODE -ne 0) { throw "SoapySDRUtil.exe --info failed" }
+              & .\dumphfdl.exe --help 2>&1 | Out-File "$env:RUNNER_TEMP\dumphfdl-help.txt" -Encoding ASCII
+              $dumphfdlExit = $LASTEXITCODE
+
+              & .\SoapySDRUtil.exe --info 2>&1 | Out-File "$env:RUNNER_TEMP\soapy-info.txt" -Encoding ASCII
+              $soapyExit = $LASTEXITCODE
+
+              $ErrorActionPreference = $oldEap
+
+              if ($dumphfdlExit -ne 0) { throw "dumphfdl.exe --help failed after timestamp patch (exit $dumphfdlExit)" }
+              if ($soapyExit -ne 0) { throw "SoapySDRUtil.exe --info failed (exit $soapyExit)" }
 
               $soapy = Get-Content "$env:RUNNER_TEMP\soapy-info.txt" -Raw
               if ($soapy -notmatch "(?i)airspyhf") { throw "AirspyHF module not visible" }
