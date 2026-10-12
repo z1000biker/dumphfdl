@@ -41,7 +41,7 @@ jobs:
           set -euxo pipefail
           cd "$RUNNER_TEMP"
           git clone --depth 1 --branch soapy-sdr-0.8.1 https://github.com/pothosware/SoapySDR.git
-          cmake -S SoapySDR -B soapysdr-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 -DENABLE_PYTHON=OFF -DENABLE_PYTHON3=OFF
+          cmake -S SoapySDR -B soapysdr-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 -DENABLE_PYTHON=OFF -DENABLE_PYTHON3=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build soapysdr-build
           cmake --install soapysdr-build
 
