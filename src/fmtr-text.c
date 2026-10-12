@@ -27,7 +27,11 @@ static la_vstring *format_timestamp(struct timeval tv) {
 	struct tm *tmstruct = (Config.utc == true ? gmtime(&seconds) : localtime(&seconds));
 
 	char tbuf[30], tzbuf[8];
+	#ifdef _WIN32
+	strftime(tbuf, sizeof(tbuf), "%x %X", tmstruct);
+#else
 	strftime(tbuf, sizeof(tbuf), "%F %T", tmstruct);
+#endif
 	strftime(tzbuf, sizeof(tzbuf), "%Z", tmstruct);
 
 	la_vstring *vstr = la_vstring_new();
