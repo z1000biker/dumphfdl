@@ -1,14 +1,11 @@
-name: Build Windows x64 SoapySDR + AirspyHF v3
+name: Build Windows x64 SoapySDR + AirspyHF
 
 on:
   push:
-    branches: [windows-soapy-airspyhf]
+    branches:
+      - windows-soapy-airspyhf
     paths:
       - ".github/workflows/build-windows-airspyhf-v3.yml"
-      - "src/**"
-      - "windows/**"
-      - "CMakeLists.txt"
-      - "ci/**"
   workflow_dispatch:
 
 permissions:
@@ -19,54 +16,35 @@ env:
   ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-soapy-airspyhf.zip
 
 jobs:
-  build:
+  package:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up MSYS2 UCRT64
+      - name: Set up MSYS2 MinGW64
         uses: msys2/setup-msys2@v2
         with:
-          msystem: UCRT64
+          msystem: MINGW64
           update: true
           install: >-
             git
-            make
-            mingw-w64-ucrt-x86_64-gcc
-            mingw-w64-ucrt-x86_64-cmake
-            mingw-w64-ucrt-x86_64-ninja
-            mingw-w64-ucrt-x86_64-pkgconf
-            mingw-w64-ucrt-x86_64-glib2
-            mingw-w64-ucrt-x86_64-fftw
-            mingw-w64-ucrt-x86_64-libconfig
-            mingw-w64-ucrt-x86_64-soapysdr
-            mingw-w64-ucrt-x86_64-soapyrtlsdr
-            mingw-w64-ucrt-x86_64-rtl-sdr
-            mingw-w64-ucrt-x86_64-libusb
-            mingw-w64-ucrt-x86_64-zlib
+            unzip
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-soapysdr
+            mingw-w64-x86_64-libusb
 
-      - name: Build liquid-dsp 1.8.3
-        shell: msys2 {0}
+      - name: Download known-good Windows package
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -euxo pipefail
-          cd "$RUNNER_TEMP"
-          git clone --depth 1 --branch v1.8.3 https://github.com/jgaeddert/liquid-dsp.git
-          cd liquid-dsp
-          python "$GITHUB_WORKSPACE/ci/patch-liquid-windows.py"
-          cd ..
-          cmake -S liquid-dsp -B liquid-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64 -DBUILD_EXAMPLES=OFF -DBUILD_AUTOTESTS=OFF -DBUILD_BENCHMARKS=OFF -DENABLE_LOGGING=OFF -DENABLE_TIMESTAMPS=OFF
-          cmake --build liquid-build
-          cmake --install liquid-build
-
-      - name: Build libacars 2.2.1
-        shell: msys2 {0}
-        run: |
-          set -euxo pipefail
-          cd "$RUNNER_TEMP"
-          git clone --depth 1 --branch v2.2.1 https://github.com/szpajder/libacars.git
-          cmake -S libacars -B libacars-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64 -DZLIB=ON -DLIBXML2=OFF -DJANSSON=OFF
-          cmake --build libacars-build
-          cmake --install libacars-build
+          gh release download v1.7.0-windows1 --pattern "dumphfdl-windows-x64-portable.zip" --dir .
+          Expand-Archive -Path ".\dumphfdl-windows-x64-portable.zip" -DestinationPath ".\package" -Force
+          if (-not (Test-Path ".\package\dumphfdl.exe")) { throw "Base dumphfdl.exe missing" }
+          if (-not (Test-Path ".\package\SoapySDRUtil.exe")) { throw "Base SoapySDRUtil.exe missing" }
 
       - name: Build libairspyhf
         shell: msys2 {0}
@@ -74,8 +52,10 @@ jobs:
           set -euxo pipefail
           cd "$RUNNER_TEMP"
           git clone https://github.com/airspy/airspyhf.git
-          cd airspyhf && git checkout 24fe8ffcb00b14f827268bbad89ae1392de055e5 && cd ..
-          cmake -S airspyhf -B airspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64
+          cd airspyhf
+          git checkout 24fe8ffcb00b14f827268bbad89ae1392de055e5
+          cd ..
+          cmake -S airspyhf -B airspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64
           cmake --build airspyhf-build
           cmake --install airspyhf-build
 
@@ -85,75 +65,71 @@ jobs:
           set -euxo pipefail
           cd "$RUNNER_TEMP"
           git clone https://github.com/pothosware/SoapyAirspyHF.git
-          cd SoapyAirspyHF && git checkout 0b3daf0b47c3c1d0857c873bb184f6a86a37333c && cd ..
-          cmake -S SoapyAirspyHF -B soapyairspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64
+          cd SoapyAirspyHF
+          git checkout 0b3daf0b47c3c1d0857c873bb184f6a86a37333c
+          cd ..
+          cmake -S SoapyAirspyHF -B soapyairspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64
           cmake --build soapyairspyhf-build
           cmake --install soapyairspyhf-build
 
-      - name: Verify Soapy modules
-        shell: msys2 {0}
-        run: |
-          set -euxo pipefail
-          SoapySDRUtil --info | tee "$RUNNER_TEMP/soapy-info.txt"
-          grep -qi "airspyhf" "$RUNNER_TEMP/soapy-info.txt"
-          grep -qi "rtlsdr" "$RUNNER_TEMP/soapy-info.txt"
-
-      - name: Configure and build dumphfdl
-        shell: msys2 {0}
-        run: |
-          set -euxo pipefail
-          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64 -DSOAPYSDR=ON -DETSY_STATSD=OFF -DSQLITE=OFF -DZMQ=OFF -DRDKAFKA=OFF -DPROFILING=OFF 2>&1 | tee "$RUNNER_TEMP/dumphfdl-configure.txt"
-          grep -Eq "soapysdr:.*requested: ON, enabled: TRUE" "$RUNNER_TEMP/dumphfdl-configure.txt"
-          cmake --build build-win
-          ./build-win/src/dumphfdl.exe --help 2>&1 | tee "$RUNNER_TEMP/dumphfdl-help.txt"
-          grep -q -- "--soapysdr" "$RUNNER_TEMP/dumphfdl-help.txt"
-
-      - name: Assemble portable package
+      - name: Add AirspyHF module to portable package
         shell: msys2 {0}
         run: |
           set -euxo pipefail
           PKG="$GITHUB_WORKSPACE/package"
-          rm -rf "$PKG"
-          mkdir -p "$PKG/SoapySDR/modules0.8"
-          cp build-win/src/dumphfdl.exe "$PKG/"
-          cp /ucrt64/bin/SoapySDRUtil.exe "$PKG/"
-          cp etc/systable.conf "$PKG/"
-          cp LICENSE "$PKG/"
-          cp windows/*.ps1 "$PKG/"
-          cp windows/README-WINDOWS.txt windows/README-AIRSPYHF.txt "$PKG/"
-          find /ucrt64/lib/SoapySDR -type f -iname "*.dll" -exec cp -f {} "$PKG/SoapySDR/modules0.8/" ;
+          MODDIR="$PKG/SoapySDR/modules0.8"
+          mkdir -p "$MODDIR"
+
+          AIRSPY_MODULE="$(find /mingw64/lib/SoapySDR/modules0.8 -maxdepth 1 -type f -iname '*airspyhf*.dll' | head -n1)"
+          test -n "$AIRSPY_MODULE"
+          cp -f "$AIRSPY_MODULE" "$MODDIR/"
 
           copy_deps() {
-            local queue=("$@")
-            while (("${#queue[@]}" > 0)); do
-              local item="${queue[0]}"
-              queue=("${queue[@]:1}")
-              while IFS= read -r dep; do
-                [[ -f "$dep" ]] || continue
-                case "$dep" in
-                  /ucrt64/bin/*.dll)
-                    local base="$(basename "$dep")"
-                    if [[ ! -f "$PKG/$base" ]]; then
-                      cp "$dep" "$PKG/$base"
-                      queue+=("$PKG/$base")
-                    fi
-                    ;;
-                esac
-              done < <(ldd "$item" | awk '/=> \/ucrt64\/bin\// {print $3}')
-            done
+            local item="$1"
+            while IFS= read -r dep; do
+              [[ -f "$dep" ]] || continue
+              case "$dep" in
+                /mingw64/bin/libSoapySDR.dll)
+                  ;;
+                /mingw64/bin/*.dll)
+                  cp -f "$dep" "$PKG/"
+                  ;;
+              esac
+            done < <(ldd "$item" | awk '/=> \/mingw64\/bin\// {print $3}')
           }
 
-          seeds=("$PKG/dumphfdl.exe" "$PKG/SoapySDRUtil.exe")
-          while IFS= read -r module; do seeds+=("$module"); done < <(find "$PKG/SoapySDR/modules0.8" -type f -iname "*.dll")
-          copy_deps "${seeds[@]}"
+          copy_deps "$AIRSPY_MODULE"
+          for dll in "$PKG"/*.dll; do
+            [[ -f "$dll" ]] || continue
+            copy_deps "$dll"
+          done
 
+          cp -f windows/find-airspyhf.ps1 "$PKG/"
+          cp -f windows/receive-airspyhf-example.ps1 "$PKG/"
+          cp -f windows/start-dumphfdl.ps1 "$PKG/"
+          cp -f windows/README-AIRSPYHF.txt "$PKG/"
+
+      - name: Validate portable package
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          PKG="$GITHUB_WORKSPACE/package"
           export PATH="$PKG:$PATH"
           export SOAPY_SDR_PLUGIN_PATH="$PKG/SoapySDR/modules0.8"
+
           cd "$PKG"
-          ./SoapySDRUtil.exe --info | tee "$RUNNER_TEMP/portable-soapy-info.txt"
-          grep -qi "airspyhf" "$RUNNER_TEMP/portable-soapy-info.txt"
-          grep -qi "rtlsdr" "$RUNNER_TEMP/portable-soapy-info.txt"
-          ./dumphfdl.exe --help | tee "$RUNNER_TEMP/portable-help.txt"
+          ./SoapySDRUtil.exe --info 2>&1 | tee "$RUNNER_TEMP/soapy-info.txt"
+          grep -qi "airspyhf" "$RUNNER_TEMP/soapy-info.txt"
+          grep -qi "rtlsdr" "$RUNNER_TEMP/soapy-info.txt"
+
+          ./dumphfdl.exe --help 2>&1 | tee "$RUNNER_TEMP/dumphfdl-help.txt"
+          grep -q -- "--soapysdr" "$RUNNER_TEMP/dumphfdl-help.txt"
+
+          if find . -type f \( -iname "*.exe" -o -iname "*.dll" \) -print0 |
+             xargs -0 -n1 ldd 2>/dev/null | grep -qi "msys-2.0.dll"; then
+            echo "ERROR: package depends on MSYS runtime"
+            exit 1
+          fi
 
       - name: Create ZIP
         shell: powershell
@@ -173,13 +149,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = $env:RELEASE_TAG
-          $archive = $env:ARCHIVE_NAME
-          $notes = "Native portable Windows x64 build of dumphfdl 1.7.0 with SoapySDR enabled, Airspy HF+ / Airspy HF+ Discovery support through SoapyAirspyHF, and RTL-SDR support retained. Hardware validation with a real Airspy HF+ Discovery is requested."
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag $archive --clobber
-            gh release edit $tag --title "dumphfdl 1.7.0 Windows x64 - SoapySDR / Airspy HF+" --notes $notes
-          } else {
-            gh release create $tag $archive --target windows-soapy-airspyhf --title "dumphfdl 1.7.0 Windows x64 - SoapySDR / Airspy HF+" --notes $notes
-          }
+          $notes = "Portable Windows x64 dumphfdl 1.7.0 package with Airspy HF+ / Airspy HF+ Discovery support through SoapyAirspyHF. The known-good v1.7.0-windows1 executable is retained and RTL-SDR support remains included. Automated checks verify that both airspyhf and rtlsdr Soapy modules load and that dumphfdl exposes --soapysdr. Live RF validation requires physical Airspy HF+ hardware."
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-soapy-airspyhf --title "dumphfdl 1.7.0 Windows x64 - Airspy HF+" --notes $notes
