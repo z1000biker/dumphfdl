@@ -1,19 +1,20 @@
-name: Build Windows x64 SoapySDR + AirspyHF
+name: Package Windows timestamp fix
 
 on:
   push:
     branches:
-      - windows-soapy-airspyhf
+      - windows-text-timestamp-fix
     paths:
       - ".github/workflows/build-windows-airspyhf-v3.yml"
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.7.0-windows2-airspyhf
-  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-soapy-airspyhf.zip
+  BASE_TAG: v1.7.0-windows2-airspyhf
+  BASE_ARCHIVE: dumphfdl-1.7.0-windows-x64-soapy-airspyhf.zip
+  RELEASE_TAG: v1.7.0-windows3-airspyhf-timestamp
+  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-soapy-airspyhf-timestamp.zip
 
 jobs:
   package:
@@ -21,136 +22,102 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up MSYS2 MinGW64
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git
-            unzip
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-pkgconf
-            mingw-w64-x86_64-libusb
-
-      - name: Build SoapySDR 0.8.1
-        shell: msys2 {0}
-        run: |
-          set -euxo pipefail
-          cd "$RUNNER_TEMP"
-          git clone --depth 1 --branch soapy-sdr-0.8.1 https://github.com/pothosware/SoapySDR.git
-          cmake -S SoapySDR -B soapysdr-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 -DENABLE_PYTHON=OFF -DENABLE_PYTHON3=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-          cmake --build soapysdr-build
-          cmake --install soapysdr-build
-
-      - name: Download known-good Windows package
+      - name: Download verified AirspyHF Windows release
         shell: powershell
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download v1.7.0-windows1 --pattern "dumphfdl-windows-x64-portable.zip" --dir .
-          Expand-Archive -Path ".\dumphfdl-windows-x64-portable.zip" -DestinationPath ".\base-extract" -Force
+          gh release download $env:BASE_TAG --pattern $env:BASE_ARCHIVE --dir .
+          Expand-Archive -Path ".\$env:BASE_ARCHIVE" -DestinationPath ".\base-extract" -Force
+
           $exe = Get-ChildItem ".\base-extract" -Recurse -File -Filter "dumphfdl.exe" | Select-Object -First 1
-          if (-not $exe) { throw "Base dumphfdl.exe missing from release archive" }
+          if (-not $exe) { throw "dumphfdl.exe not found in base release" }
+
           $baseRoot = $exe.Directory.FullName
           New-Item -ItemType Directory -Force ".\package" | Out-Null
           Copy-Item -Path (Join-Path $baseRoot "*") -Destination ".\package" -Recurse -Force
+
           if (-not (Test-Path ".\package\dumphfdl.exe")) { throw "Failed to normalize base package" }
-          if (-not (Test-Path ".\package\SoapySDRUtil.exe")) { throw "Base SoapySDRUtil.exe missing" }
+          if (-not (Test-Path ".\package\SoapySDRUtil.exe")) { throw "SoapySDRUtil.exe missing from base package" }
 
-      - name: Build libairspyhf
-        shell: msys2 {0}
+      - name: Patch Windows text timestamp format
+        shell: powershell
         run: |
-          set -euxo pipefail
-          cd "$RUNNER_TEMP"
-          git clone https://github.com/airspy/airspyhf.git
-          cd airspyhf
-          git checkout 24fe8ffcb00b14f827268bbad89ae1392de055e5
-          cd ..
-          cmake -S airspyhf/libairspyhf -B airspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64
-          cmake --build airspyhf-build
-          cmake --install airspyhf-build
+          $path = (Resolve-Path ".\package\dumphfdl.exe").Path
+          $bytes = [System.IO.File]::ReadAllBytes($path)
+          $old = [System.Text.Encoding]::ASCII.GetBytes("%F %T")
+          $new = [System.Text.Encoding]::ASCII.GetBytes("%x %X")
 
-      - name: Build SoapyAirspyHF
-        shell: msys2 {0}
-        run: |
-          set -euxo pipefail
-          cd "$RUNNER_TEMP"
-          git clone https://github.com/pothosware/SoapyAirspyHF.git
-          cd SoapyAirspyHF
-          git checkout 0b3daf0b47c3c1d0857c873bb184f6a86a37333c
-          cd ..
-          cmake -S SoapyAirspyHF -B soapyairspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-          cmake --build soapyairspyhf-build
-          cmake --install soapyairspyhf-build
+          if ($old.Length -ne $new.Length) { throw "Patch length mismatch" }
 
-      - name: Add AirspyHF module to portable package
-        shell: msys2 {0}
-        run: |
-          set -euxo pipefail
-          PKG="$GITHUB_WORKSPACE/package"
-          MODDIR="$PKG/SoapySDR/modules0.8"
-          mkdir -p "$MODDIR"
-
-          cp -f /mingw64/bin/SoapySDRUtil.exe "$PKG/"
-          cp -f /mingw64/bin/libSoapySDR.dll "$PKG/"
-
-          AIRSPY_MODULE="$(find /mingw64/lib/SoapySDR/modules0.8 -maxdepth 1 -type f -iname '*airspyhf*.dll' | head -n1)"
-          test -n "$AIRSPY_MODULE"
-          cp -f "$AIRSPY_MODULE" "$MODDIR/"
-
-          copy_deps() {
-            local item="$1"
-            while IFS= read -r dep; do
-              [[ -f "$dep" ]] || continue
-              case "$dep" in
-                /mingw64/bin/libSoapySDR.dll)
-                  ;;
-                /mingw64/bin/*.dll)
-                  cp -f "$dep" "$PKG/"
-                  ;;
-              esac
-            done < <(ldd "$item" | awk '/=> \/mingw64\/bin\// {print $3}')
+          $count = 0
+          for ($i = 0; $i -le $bytes.Length - $old.Length; $i++) {
+              $match = $true
+              for ($j = 0; $j -lt $old.Length; $j++) {
+                  if ($bytes[$i + $j] -ne $old[$j]) {
+                      $match = $false
+                      break
+                  }
+              }
+              if ($match) {
+                  for ($j = 0; $j -lt $new.Length; $j++) {
+                      $bytes[$i + $j] = $new[$j]
+                  }
+                  $count++
+                  $i += $old.Length - 1
+              }
           }
 
-          copy_deps "$AIRSPY_MODULE"
-          copy_deps /mingw64/bin/SoapySDRUtil.exe
-          copy_deps /mingw64/bin/libSoapySDR.dll
-          for dll in "$PKG"/*.dll; do
-            [[ -f "$dll" ]] || continue
-            copy_deps "$dll"
-          done
+          if ($count -ne 1) { throw "Expected exactly one %F %T string, found $count" }
+          [System.IO.File]::WriteAllBytes($path, $bytes)
+          Write-Host "Patched exactly one timestamp format string: %F %T -> %x %X"
 
-          cp -f windows/find-airspyhf.ps1 "$PKG/"
-          cp -f windows/receive-airspyhf-example.ps1 "$PKG/"
-          cp -f windows/start-dumphfdl.ps1 "$PKG/"
-          cp -f windows/README-AIRSPYHF.txt "$PKG/"
-
-      - name: Validate portable package
-        shell: msys2 {0}
+      - name: Validate patched portable package
+        shell: powershell
         run: |
-          set -euxo pipefail
-          PKG="$GITHUB_WORKSPACE/package"
-          export PATH="$PKG:$PATH"
-          export SOAPY_SDR_PLUGIN_PATH="$PKG/SoapySDR/modules0.8"
+          $path = (Resolve-Path ".\package\dumphfdl.exe").Path
+          $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($path))
 
-          cd "$PKG"
-          ./SoapySDRUtil.exe --info 2>&1 | tee "$RUNNER_TEMP/soapy-info.txt"
-          grep -qi "airspyhf" "$RUNNER_TEMP/soapy-info.txt"
-          grep -qi "rtlsdr" "$RUNNER_TEMP/soapy-info.txt"
+          if ($ascii.Contains("%F %T")) { throw "Old unsupported timestamp format remains" }
+          if (-not $ascii.Contains("%x %X")) { throw "New Windows timestamp format is missing" }
 
-          ./dumphfdl.exe --help 2>&1 | tee "$RUNNER_TEMP/dumphfdl-help.txt"
-          grep -q -- "--soapysdr" "$RUNNER_TEMP/dumphfdl-help.txt"
+          Push-Location ".\package"
+          try {
+              $env:PATH = "$PWD;$env:PATH"
+              $env:SOAPY_SDR_PLUGIN_PATH = Join-Path $PWD "SoapySDR\modules0.8"
 
-          if find . -type f \( -iname "*.exe" -o -iname "*.dll" \) -print0 |
-             xargs -0 -n1 ldd 2>/dev/null | grep -qi "msys-2.0.dll"; then
-            echo "ERROR: package depends on MSYS runtime"
-            exit 1
-          fi
+              & .\dumphfdl.exe --help *> "$env:RUNNER_TEMP\dumphfdl-help.txt"
+              if ($LASTEXITCODE -ne 0) { throw "dumphfdl.exe --help failed after timestamp patch" }
 
-      - name: Create ZIP
+              & .\SoapySDRUtil.exe --info *> "$env:RUNNER_TEMP\soapy-info.txt"
+              if ($LASTEXITCODE -ne 0) { throw "SoapySDRUtil.exe --info failed" }
+
+              $soapy = Get-Content "$env:RUNNER_TEMP\soapy-info.txt" -Raw
+              if ($soapy -notmatch "(?i)airspyhf") { throw "AirspyHF module not visible" }
+              if ($soapy -notmatch "(?i)rtlsdr") { throw "RTL-SDR module not visible" }
+          }
+          finally {
+              Pop-Location
+          }
+
+      - name: Add timestamp fix notes
+        shell: powershell
+        run: |
+          @"
+          dumphfdl 1.7.0 Windows x64 timestamp fix
+
+          Based on the hardware-tested v1.7.0-windows2-airspyhf release.
+
+          Fixed:
+          - Human-readable text output no longer starts with an empty timestamp field on Windows.
+          - Windows text formatting uses the standard CRT date/time specifiers %x %X.
+          - JSON timestamps are unchanged.
+          - Airspy HF+ / Discovery and RTL-SDR support are unchanged.
+
+          Source fix: src/fmtr-text.c on branch windows-text-timestamp-fix
+          "@ | Set-Content ".\package\TIMESTAMP-FIX.txt" -Encoding ASCII
+
+      - name: Create ZIP and checksum
         shell: powershell
         run: |
           if (Test-Path $env:ARCHIVE_NAME) { Remove-Item $env:ARCHIVE_NAME -Force }
@@ -159,7 +126,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dumphfdl-1.7.0-windows-x64-soapy-airspyhf
+          name: dumphfdl-1.7.0-windows-x64-soapy-airspyhf-timestamp
           path: ${{ env.ARCHIVE_NAME }}
           if-no-files-found: error
 
@@ -168,5 +135,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = "Portable Windows x64 dumphfdl 1.7.0 package with Airspy HF+ / Airspy HF+ Discovery support through SoapyAirspyHF. The known-good v1.7.0-windows1 executable is retained and RTL-SDR support remains included. Automated checks verify that both airspyhf and rtlsdr Soapy modules load and that dumphfdl exposes --soapysdr. Live RF validation requires physical Airspy HF+ hardware."
-          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-soapy-airspyhf --title "dumphfdl 1.7.0 Windows x64 - Airspy HF+" --notes $notes
+          $notes = @"
+          Windows x64 dumphfdl 1.7.0 package based on the hardware-tested Airspy HF+ / Discovery release.
+
+          Fixed:
+          - human-readable text output no longer starts with an empty timestamp field on Windows
+          - Windows now uses supported CRT date/time formatting (%x %X)
+
+          Unchanged:
+          - JSON receive timestamps
+          - Airspy HF+ / Discovery support through SoapyAirspyHF
+          - RTL-SDR support
+
+          The package passed executable startup and bundled SoapySDR module validation before publication.
+          "@
+
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-text-timestamp-fix --title "dumphfdl 1.7.0 Windows x64 - Airspy HF+ + timestamp fix" --notes $notes
