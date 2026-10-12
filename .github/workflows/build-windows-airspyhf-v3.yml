@@ -51,8 +51,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download v1.7.0-windows1 --pattern "dumphfdl-windows-x64-portable.zip" --dir .
-          Expand-Archive -Path ".\dumphfdl-windows-x64-portable.zip" -DestinationPath ".\package" -Force
-          if (-not (Test-Path ".\package\dumphfdl.exe")) { throw "Base dumphfdl.exe missing" }
+          Expand-Archive -Path ".\dumphfdl-windows-x64-portable.zip" -DestinationPath ".\base-extract" -Force
+          $exe = Get-ChildItem ".\base-extract" -Recurse -File -Filter "dumphfdl.exe" | Select-Object -First 1
+          if (-not $exe) { throw "Base dumphfdl.exe missing from release archive" }
+          $baseRoot = $exe.Directory.FullName
+          New-Item -ItemType Directory -Force ".\package" | Out-Null
+          Copy-Item -Path (Join-Path $baseRoot "*") -Destination ".\package" -Recurse -Force
+          if (-not (Test-Path ".\package\dumphfdl.exe")) { throw "Failed to normalize base package" }
           if (-not (Test-Path ".\package\SoapySDRUtil.exe")) { throw "Base SoapySDRUtil.exe missing" }
 
       - name: Build libairspyhf
