@@ -69,7 +69,7 @@ jobs:
           cd airspyhf
           git checkout 24fe8ffcb00b14f827268bbad89ae1392de055e5
           cd ..
-          cmake -S airspyhf -B airspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64
+          cmake -S airspyhf/libairspyhf -B airspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64
           cmake --build airspyhf-build
           cmake --install airspyhf-build
 
@@ -82,7 +82,7 @@ jobs:
           cd SoapyAirspyHF
           git checkout 0b3daf0b47c3c1d0857c873bb184f6a86a37333c
           cd ..
-          cmake -S SoapyAirspyHF -B soapyairspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64
+          cmake -S SoapyAirspyHF -B soapyairspyhf-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/mingw64 -DCMAKE_POLICY_VERSION_MINIMUM=3.5
           cmake --build soapyairspyhf-build
           cmake --install soapyairspyhf-build
 
