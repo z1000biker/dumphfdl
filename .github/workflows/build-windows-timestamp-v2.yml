@@ -53,74 +53,52 @@ jobs:
 
           python - <<'PY'
           from pathlib import Path
+          import re
 
           timer = Path("liquid-dsp/src/core/src/timer.c")
           s = timer.read_text(encoding="utf-8")
-          s = s.replace(
-              "#include <sys/resource.h>\n",
-              "#ifndef _WIN32\n#include <sys/resource.h>\n#endif\n",
-              1,
-          )
-          s = s.replace(
-              "    struct rusage tic_rusage;\n",
-              "#ifndef _WIN32\n    struct rusage tic_rusage;\n#endif\n",
-              1,
-          )
-          old_tic = """    } else if (_q->type == LIQUID_TIMER_RUSAGE) {
-              getrusage(RUSAGE_SELF, &_q->tic_rusage);
-          """
-          new_tic = """    } else if (_q->type == LIQUID_TIMER_RUSAGE) {
-          #ifdef _WIN32
-              return liquid_error(LIQUID_EINT,"liquid_timer_tic(), RUSAGE timer is unavailable on Windows");
-          #else
-              getrusage(RUSAGE_SELF, &_q->tic_rusage);
-          #endif
-          """
-          if old_tic not in s:
-              raise SystemExit("liquid-dsp timer tic marker not found")
-          s = s.replace(old_tic, new_tic, 1)
 
-          old_toc = """    } else if (_q->type == LIQUID_TIMER_RUSAGE) {
-              struct rusage toc;
-              getrusage(RUSAGE_SELF, &toc);
-              // compute run time
-              float time_s  = toc.ru_utime.tv_sec - _q->tic_rusage.ru_utime.tv_sec
-                            + toc.ru_stime.tv_sec - _q->tic_rusage.ru_stime.tv_sec;
-              float time_us = toc.ru_utime.tv_usec - _q->tic_rusage.ru_utime.tv_usec
-                            + toc.ru_stime.tv_usec - _q->tic_rusage.ru_stime.tv_usec;
-              return time_s + 1e-6f*time_us;
-          """
-          new_toc = """    } else if (_q->type == LIQUID_TIMER_RUSAGE) {
-          #ifdef _WIN32
-              return liquid_error(LIQUID_EINT,"liquid_timer_toc(), RUSAGE timer is unavailable on Windows");
-          #else
-              struct rusage toc;
-              getrusage(RUSAGE_SELF, &toc);
-              // compute run time
-              float time_s  = toc.ru_utime.tv_sec - _q->tic_rusage.ru_utime.tv_sec
-                            + toc.ru_stime.tv_sec - _q->tic_rusage.ru_stime.tv_sec;
-              float time_us = toc.ru_utime.tv_usec - _q->tic_rusage.ru_utime.tv_usec
-                            + toc.ru_stime.tv_usec - _q->tic_rusage.ru_stime.tv_usec;
-              return time_s + 1e-6f*time_us;
-          #endif
-          """
-          if old_toc not in s:
-              raise SystemExit("liquid-dsp timer toc marker not found")
-          s = s.replace(old_toc, new_toc, 1)
+          def sub_once(pattern, replacement, text, label, flags=0):
+              new_text, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              return new_text
+
+          s = sub_once(
+              r'(?m)^#include <sys/resource\.h>\r?$',
+              '#ifndef _WIN32\n#include <sys/resource.h>\n#endif',
+              s,
+              'liquid-dsp sys/resource.h patch',
+          )
+          s = sub_once(
+              r'(?m)^(\s*)struct rusage tic_rusage;\r?$',
+              r'#ifndef _WIN32\n\1struct rusage tic_rusage;\n#endif',
+              s,
+              'liquid-dsp tic_rusage patch',
+          )
+          s = sub_once(
+              r'(?m)^(\s*)getrusage\(RUSAGE_SELF, &_q->tic_rusage\);\r?$',
+              r'#ifdef _WIN32\n\1return liquid_error(LIQUID_EINT,"liquid_timer_tic(), RUSAGE timer is unavailable on Windows");\n#else\n\1getrusage(RUSAGE_SELF, &_q->tic_rusage);\n#endif',
+              s,
+              'liquid-dsp timer tic patch',
+          )
+          s = sub_once(
+              r'(?ms)^(\s*)struct rusage toc;\r?\n\s*getrusage\(RUSAGE_SELF, &toc\);\r?\n\s*// compute run time\r?\n\s*float time_s\s*=.*?^\s*return time_s \+ 1e-6f\*time_us;\r?$',
+              r'#ifdef _WIN32\n\1return liquid_error(LIQUID_EINT,"liquid_timer_toc(), RUSAGE timer is unavailable on Windows");\n#else\n\1struct rusage toc;\n\1getrusage(RUSAGE_SELF, &toc);\n\1// compute run time\n\1float time_s  = toc.ru_utime.tv_sec - _q->tic_rusage.ru_utime.tv_sec\n\1              + toc.ru_stime.tv_sec - _q->tic_rusage.ru_stime.tv_sec;\n\1float time_us = toc.ru_utime.tv_usec - _q->tic_rusage.ru_utime.tv_usec\n\1              + toc.ru_stime.tv_usec - _q->tic_rusage.ru_stime.tv_usec;\n\1return time_s + 1e-6f*time_us;\n#endif',
+              s,
+              'liquid-dsp timer toc patch',
+          )
           timer.write_text(s, encoding="utf-8", newline="\n")
 
           cmake = Path("liquid-dsp/CMakeLists.txt")
           c = cmake.read_text(encoding="utf-8")
-          marker = "    target_link_libraries(${target} c m)\n"
-          replacement = """    if(WIN32)
-              target_link_libraries(${target} m)
-          else()
-              target_link_libraries(${target} c m)
-          endif()
-          """
-          if marker not in c:
-              raise SystemExit("liquid-dsp libc link marker not found")
-          c = c.replace(marker, replacement, 1)
+          c = sub_once(
+              r'(?m)^(\s*)target_link_libraries\(\$\{target\} c m\)\r?$',
+              r'\1if(WIN32)\n\1    target_link_libraries(__TARGET__ m)\n\1else()\n\1    target_link_libraries(__TARGET__ c m)\n\1endif()',
+              c,
+              'liquid-dsp Windows libc link patch',
+          )
+          c = c.replace('__TARGET__', '${target}')
           cmake.write_text(c, encoding="utf-8", newline="\n")
           print("Patched liquid-dsp timer and Windows libc link")
           PY
