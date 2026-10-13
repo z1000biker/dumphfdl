@@ -1,0 +1,145 @@
+name: Package Windows Contrail bridge
+
+on:
+  push:
+    branches:
+      - windows-contrail-pchfdl
+    paths:
+      - ".github/workflows/package-windows-contrail.yml"
+
+permissions:
+  contents: write
+
+env:
+  BASE_TAG: v1.7.0-windows3-airspyhf-timestamp
+  BASE_ARCHIVE: dumphfdl-1.7.0-windows-x64-soapy-airspyhf-timestamp.zip
+  RELEASE_TAG: v1.7.0-windows4-contrail-beta
+  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-airspyhf-contrail-beta.zip
+
+jobs:
+  package:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified Windows package
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download $env:BASE_TAG --pattern $env:BASE_ARCHIVE --dir .
+          Expand-Archive -Path ".\$env:BASE_ARCHIVE" -DestinationPath ".\base-extract" -Force
+
+          $exe = Get-ChildItem ".\base-extract" -Recurse -File -Filter "dumphfdl.exe" | Select-Object -First 1
+          if (-not $exe) { throw "dumphfdl.exe not found in base release" }
+
+          $baseRoot = $exe.Directory.FullName
+          New-Item -ItemType Directory -Force ".\package" | Out-Null
+          Copy-Item -Path (Join-Path $baseRoot "*") -Destination ".\package" -Recurse -Force
+
+          if (-not (Test-Path ".\package\dumphfdl.exe")) { throw "Failed to normalize base package" }
+          if (-not (Test-Path ".\package\SoapySDRUtil.exe")) { throw "SoapySDRUtil.exe missing from base package" }
+
+      - name: Add PC-HFDL / Contrail bridge
+        shell: powershell
+        run: |
+          Copy-Item ".\windows\Convert-DumphfdlJsonToPchfdl.ps1" ".\package\" -Force
+          Copy-Item ".\windows\receive-contrail.ps1" ".\package\" -Force
+          Copy-Item ".\windows\README-CONTRAIL.txt" ".\package\" -Force
+
+      - name: Validate converter with PC-HFDL-style position fixtures
+        shell: powershell
+        run: |
+          $fixture = @'
+          {"hfnpdu":{"type":{"id":209,"name":"Performance data"},"flight_id":"RYR8WA","pos":{"lat":50.6344444444,"lon":9.7041666667},"time":{"hour":22,"min":31,"sec":54}}}
+          {"wrapper":{"hfnpdu":{"type":{"id":213,"name":"Frequency data"},"flight_id":"UAE24","pos":{"lat":47.4494444444,"lon":17.275},"utc_time":{"hour":23,"min":22,"sec":12}}}}
+          {"hfnpdu":{"type":{"id":210,"name":"System table request"}}}
+          '@
+
+          $fixturePath = Join-Path $env:RUNNER_TEMP "dumphfdl-fixture.jsonl"
+          $outputPath = Join-Path $env:RUNNER_TEMP "pchfdl-output.txt"
+          Set-Content -Path $fixturePath -Value $fixture -Encoding ASCII
+
+          Get-Content $fixturePath |
+            & ".\package\Convert-DumphfdlJsonToPchfdl.ps1" -OutputPath $outputPath |
+            Out-Host
+
+          if (-not (Test-Path $outputPath)) { throw "Converter did not create output" }
+
+          $out = Get-Content $outputPath -Raw
+          $expectedPerformance = "22:31:54  UTC  Flight ID = RYR8WA  LAT 50 38 4  N  LON 9 42 15  E"
+          $expectedFrequency = "23:22:12  UTC  Flight ID = UAE24  LAT 47 26 58  N  LON 17 16 30  E"
+
+          if ($out -notmatch [regex]::Escape("[HFNPDU PERFORMANCE]")) { throw "Performance tag missing" }
+          if ($out -notmatch [regex]::Escape($expectedPerformance)) { throw "Performance position syntax mismatch" }
+          if ($out -notmatch [regex]::Escape("[HFNPDU FREQUENCY DATA]")) { throw "Frequency-data tag missing" }
+          if ($out -notmatch [regex]::Escape($expectedFrequency)) { throw "Frequency-data position syntax mismatch" }
+          if (($out | Select-String -Pattern "\[HFNPDU " -AllMatches).Matches.Count -ne 2) {
+              throw "Unexpected extra compatibility records"
+          }
+
+      - name: Validate existing dumphfdl and SoapySDR package
+        shell: powershell
+        run: |
+          Push-Location ".\package"
+          try {
+              $env:PATH = "$PWD;$env:PATH"
+              $env:SOAPY_SDR_PLUGIN_PATH = Join-Path $PWD "SoapySDR\modules0.8"
+
+              $oldEap = $ErrorActionPreference
+              $ErrorActionPreference = "Continue"
+
+              & .\dumphfdl.exe --help 2>&1 | Out-File "$env:RUNNER_TEMP\dumphfdl-help.txt" -Encoding ASCII
+              $dumphfdlExit = $LASTEXITCODE
+
+              & .\SoapySDRUtil.exe --info 2>&1 | Out-File "$env:RUNNER_TEMP\soapy-info.txt" -Encoding ASCII
+              $soapyExit = $LASTEXITCODE
+
+              $ErrorActionPreference = $oldEap
+
+              if ($dumphfdlExit -ne 0) { throw "dumphfdl.exe --help failed (exit $dumphfdlExit)" }
+              if ($soapyExit -ne 0) { throw "SoapySDRUtil.exe --info failed (exit $soapyExit)" }
+
+              $soapy = Get-Content "$env:RUNNER_TEMP\soapy-info.txt" -Raw
+              if ($soapy -notmatch "(?i)airspyhf") { throw "AirspyHF module not visible" }
+              if ($soapy -notmatch "(?i)rtlsdr") { throw "RTL-SDR module not visible" }
+          }
+          finally {
+              Pop-Location
+          }
+
+      - name: Create ZIP and checksum
+        shell: powershell
+        run: |
+          if (Test-Path $env:ARCHIVE_NAME) { Remove-Item $env:ARCHIVE_NAME -Force }
+          Compress-Archive -Path ".\package\*" -DestinationPath $env:ARCHIVE_NAME -CompressionLevel Optimal
+          Get-FileHash $env:ARCHIVE_NAME -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dumphfdl-1.7.0-windows-x64-airspyhf-contrail-beta
+          path: ${{ env.ARCHIVE_NAME }}
+          if-no-files-found: error
+
+      - name: Publish prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          Windows x64 dumphfdl 1.7.0 package with the hardware-tested Airspy HF+ / Discovery support and Windows timestamp fix, plus a new PC-HFDL-style text compatibility bridge for testing with Contrail.
+
+          Added:
+          - Convert-DumphfdlJsonToPchfdl.ps1
+          - receive-contrail.ps1
+          - README-CONTRAIL.txt
+
+          The bridge converts dumphfdl JSON position messages into the traditional PC-HFDL position syntax for Performance Data and Frequency Data records.
+
+          Automated validation confirms the generated text matches representative PC-HFDL position lines and that the existing AirspyHF and RTL-SDR modules still load.
+
+          This is a prerelease because actual Contrail parser compatibility still needs a real-world test.
+          "@
+
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-contrail-pchfdl --title "dumphfdl 1.7.0 Windows x64 - Contrail / PC-HFDL bridge beta" --notes $notes --prerelease
