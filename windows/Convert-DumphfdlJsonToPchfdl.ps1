@@ -198,6 +198,6 @@ process {
             $block,
             [System.Text.Encoding]::ASCII
         )
-        Write-Output $block.TrimEnd()
+        Write-Output ($block.TrimEnd())
     }
 }
