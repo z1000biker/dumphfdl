@@ -203,7 +203,7 @@ jobs:
           cp windows/README-WINDOWS.txt "$PKG/"
           if [[ -f windows/README-AIRSPYHF.txt ]]; then cp windows/README-AIRSPYHF.txt "$PKG/"; fi
 
-          find /ucrt64/lib/SoapySDR -type f -iname "*.dll" -exec cp -f {} "$PKG/SoapySDR/modules0.8/" ;
+          find /ucrt64/lib/SoapySDR -type f -iname "*.dll" -exec cp -f {} "$PKG/SoapySDR/modules0.8/" \\;
 
           copy_deps() {
             local queue=("$@")
