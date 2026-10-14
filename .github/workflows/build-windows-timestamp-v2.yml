@@ -273,14 +273,24 @@ jobs:
       - name: Validate native PowerShell startup
         shell: powershell
         run: |
-          Push-Location ".\\package"
+          Push-Location ".\package"
           try {
-            $help = & .\\dumphfdl.exe --help 2>&1 | Out-String
-            if ($LASTEXITCODE -ne 0) { throw "dumphfdl native startup failed: $help" }
+            $helpOut = Join-Path $env:RUNNER_TEMP "native-help.out"
+            $helpErr = Join-Path $env:RUNNER_TEMP "native-help.err"
+            $exePath = Join-Path (Get-Location) "dumphfdl.exe"
+            $process = Start-Process -FilePath $exePath -ArgumentList "--help" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $helpOut -RedirectStandardError $helpErr
+            $help = (Get-Content $helpOut -Raw) + (Get-Content $helpErr -Raw)
+            if ($process.ExitCode -ne 0) { throw "dumphfdl native startup failed: $help" }
             if ($help -notmatch "--utc") { throw "dumphfdl help is incomplete" }
-            $info = & .\\SoapySDRUtil.exe --info 2>&1 | Out-String
-            if ($LASTEXITCODE -ne 0) { throw "SoapySDRUtil native startup failed: $info" }
-            Write-Output "PASS: dumphfdl.exe and SoapySDRUtil.exe start from native PowerShell"
+            $env:SOAPY_SDR_PLUGIN_PATH = Join-Path (Get-Location) "SoapySDR\modules0.8"
+            $infoOut = Join-Path $env:RUNNER_TEMP "native-soapy.out"
+            $infoErr = Join-Path $env:RUNNER_TEMP "native-soapy.err"
+            $exePath = Join-Path (Get-Location) "SoapySDRUtil.exe"
+            $process = Start-Process -FilePath $exePath -ArgumentList "--info" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $infoOut -RedirectStandardError $infoErr
+            $info = (Get-Content $infoOut -Raw) + (Get-Content $infoErr -Raw)
+            if ($process.ExitCode -ne 0) { throw "SoapySDRUtil native startup failed: $info" }
+            if ($info -notmatch "airspyhf" -or $info -notmatch "rtlsdr") { throw "Native Soapy modules are missing: $info" }
+            Write-Output "PASS: dumphfdl.exe and SoapySDRUtil.exe start from native PowerShell with bundled DLLs and modules"
           } finally {
             Pop-Location
           }
