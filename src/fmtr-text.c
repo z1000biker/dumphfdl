@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 #include <stdbool.h>
+#include <stdint.h>                     // int64_t
 #include <stdio.h>                      // snprintf
 #include <math.h>                       // round
-#include <time.h>                       // strftime, gmtime, localtime, difftime
+#include <time.h>                       // strftime, gmtime, localtime, gmtime_r, localtime_r
 #include <sys/time.h>                   // struct timeval
 #include <libacars/libacars.h>          // la_proto_node
 #include <libacars/vstring.h>           // la_vstring
@@ -16,8 +17,20 @@ static bool fmtr_text_supports_data_type(fmtr_input_type_t type) {
 }
 
 #ifdef _WIN32
+/* Calendar arithmetic avoids _mkgmtime64's 1970..3000 range restriction.
+ * The inputs are normalized results from localtime_r/gmtime_r. DST is already
+ * reflected in their calendar fields and must not be applied a second time.
+ */
+static int64_t windows_calendar_seconds(struct tm const *tmstruct) {
+	int64_t year = (int64_t)tmstruct->tm_year + 1899;
+	int64_t days = 365 * year + year / 4 - year / 100 + year / 400
+			+ tmstruct->tm_yday;
+	return days * 86400 + tmstruct->tm_hour * 3600
+			+ tmstruct->tm_min * 60 + tmstruct->tm_sec;
+}
+
 static void format_windows_timestamp(char *tbuf, size_t tbuf_len, char *tzbuf, size_t tzbuf_len,
-		struct tm const *tmstruct, time_t seconds) {
+		struct tm const *tmstruct, struct tm const *utc_tm) {
 	ASSERT(tbuf != NULL);
 	ASSERT(tzbuf != NULL);
 	ASSERT(tmstruct != NULL);
@@ -44,22 +57,28 @@ static void format_windows_timestamp(char *tbuf, size_t tbuf_len, char *tzbuf, s
 		return;
 	}
 
-	/*
-	 * For local timestamps, emit an unambiguous numeric UTC offset. Converting
-	 * the already-local broken-down time as if it were UTC yields the actual
-	 * local offset for this timestamp, including DST.
-	 */
-	struct tm local_tm = *tmstruct;
-	time_t local_as_utc = timegm(&local_tm);
-	long offset_seconds = (long)difftime(local_as_utc, seconds);
+	ASSERT(utc_tm != NULL);
+	int64_t offset_seconds = windows_calendar_seconds(tmstruct)
+			- windows_calendar_seconds(utc_tm);
+	if(offset_seconds == 0) {
+		snprintf(tzbuf, tzbuf_len, "UTC");
+		return;
+	}
+
 	char sign = '+';
 	if(offset_seconds < 0) {
 		sign = '-';
 		offset_seconds = -offset_seconds;
 	}
-	long offset_minutes = offset_seconds / 60;
-	snprintf(tzbuf, tzbuf_len, "UTC%c%02ld:%02ld",
-			sign, offset_minutes / 60, offset_minutes % 60);
+	long offset_minutes = (long)(offset_seconds / 60);
+	int remaining_seconds = (int)(offset_seconds % 60);
+	if(remaining_seconds != 0) {
+		snprintf(tzbuf, tzbuf_len, "UTC%c%02ld:%02ld:%02d",
+				sign, offset_minutes / 60, offset_minutes % 60, remaining_seconds);
+	} else {
+		snprintf(tzbuf, tzbuf_len, "UTC%c%02ld:%02ld",
+				sign, offset_minutes / 60, offset_minutes % 60);
+	}
 }
 #endif
 
@@ -73,12 +92,20 @@ static la_vstring *format_timestamp(struct timeval tv) {
 		}
 	}
 	time_t seconds = (time_t)tv.tv_sec;
-	struct tm *tmstruct = (Config.utc == true ? gmtime(&seconds) : localtime(&seconds));
-
 	char tbuf[32], tzbuf[16];
 #ifdef _WIN32
-	format_windows_timestamp(tbuf, sizeof(tbuf), tzbuf, sizeof(tzbuf), tmstruct, seconds);
+	struct tm tmstruct, utc_tm;
+	if((Config.utc == true ? gmtime_r(&seconds, &tmstruct)
+			: localtime_r(&seconds, &tmstruct)) == NULL ||
+			(Config.utc == false && gmtime_r(&seconds, &utc_tm) == NULL)) {
+		la_vstring *invalid = la_vstring_new();
+		la_vstring_append_sprintf(invalid, "invalid timestamp");
+		return invalid;
+	}
+	format_windows_timestamp(tbuf, sizeof(tbuf), tzbuf, sizeof(tzbuf), &tmstruct,
+			Config.utc == true ? NULL : &utc_tm);
 #else
+	struct tm *tmstruct = (Config.utc == true ? gmtime(&seconds) : localtime(&seconds));
 	strftime(tbuf, sizeof(tbuf), "%F %T", tmstruct);
 	strftime(tzbuf, sizeof(tzbuf), "%Z", tmstruct);
 #endif
