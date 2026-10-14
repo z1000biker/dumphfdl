@@ -1,4 +1,4 @@
-name: Build Windows timestamp fix v2
+name: Build Windows timestamp fix v3
 
 on:
   push:
@@ -12,8 +12,8 @@ permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.7.0-windows5-airspyhf-timestamp-v2-beta
-  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v2-beta.zip
+  RELEASE_TAG: v1.7.0-windows6-airspyhf-timestamp-v3-beta
+  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v3-beta.zip
 
 jobs:
   build:
@@ -175,17 +175,11 @@ jobs:
           ./build-win/src/dumphfdl.exe --help 2>&1 | tee "$RUNNER_TEMP/dumphfdl-help.txt"
           grep -q -- "--soapysdr" "$RUNNER_TEMP/dumphfdl-help.txt"
 
-      - name: Validate deterministic Windows timestamp source
+      - name: Test timestamps on native Windows UCRT
         shell: msys2 {0}
         run: |
           set -euxo pipefail
-          grep -Fq 'snprintf(tbuf, tbuf_len, "%04d-%02d-%02d %02d:%02d:%02d"' src/fmtr-text.c
-          grep -Fq 'snprintf(tzbuf, tzbuf_len, "UTC");' src/fmtr-text.c
-          grep -Fq '"UTC%c%02ld:%02ld"' src/fmtr-text.c
-          if grep -Fq 'strftime(tbuf, sizeof(tbuf), "%x %X"' src/fmtr-text.c; then
-            echo "ERROR: locale-dependent Windows timestamp formatter remains"
-            exit 1
-          fi
+          python ci/test-windows-text-timestamp.py | tee "$RUNNER_TEMP/timestamp-crt-tests.txt"
 
       - name: Assemble portable package
         shell: msys2 {0}
@@ -231,21 +225,24 @@ jobs:
           while IFS= read -r module; do seeds+=("$module"); done < <(find "$PKG/SoapySDR/modules0.8" -type f -iname "*.dll")
           copy_deps "${seeds[@]}"
 
-          cat > "$PKG/TIMESTAMP-FIX-V2.txt" <<'EOF'
-          dumphfdl 1.7.0 Windows timestamp fix v2
+          cat > "$PKG/TIMESTAMP-FIX-V3.txt" <<'EOF'
+          dumphfdl 1.7.0 Windows timestamp fix v3
 
-          This beta rebuild fixes the remaining Windows text timestamp differences.
+          This beta rebuild uses checked time conversions and calendar-based local offsets.
 
           With --utc:
             YYYY-MM-DD HH:MM:SS UTC
 
           Without --utc:
             YYYY-MM-DD HH:MM:SS UTC+HH:MM
-            (or UTC-HH:MM as appropriate)
+            (or UTC-HH:MM as appropriate; zero offset is UTC)
+            Sub-minute offsets retain seconds as UTC+HH:MM:SS.
+            --milliseconds adds .mmm after HH:MM:SS.
 
           The Windows text timestamp is no longer locale-dependent and does not
           rely on strftime("%Z") for the UTC label.
 
+          Native Windows UCRT timestamp tests passed in debug and release modes.
           JSON timestamps are unchanged.
           Airspy HF+ / Discovery and RTL-SDR support are retained.
           EOF
@@ -273,6 +270,21 @@ jobs:
             exit 1
           fi
 
+      - name: Validate native PowerShell startup
+        shell: powershell
+        run: |
+          Push-Location ".\\package"
+          try {
+            $help = & .\\dumphfdl.exe --help 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "dumphfdl native startup failed: $help" }
+            if ($help -notmatch "--utc") { throw "dumphfdl help is incomplete" }
+            $info = & .\\SoapySDRUtil.exe --info 2>&1 | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "SoapySDRUtil native startup failed: $info" }
+            Write-Output "PASS: dumphfdl.exe and SoapySDRUtil.exe start from native PowerShell"
+          } finally {
+            Pop-Location
+          }
+
       - name: Create ZIP and checksum
         shell: powershell
         run: |
@@ -282,7 +294,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v2-beta
+          name: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v3-beta
           path: ${{ env.ARCHIVE_NAME }}
           if-no-files-found: error
 
@@ -292,19 +304,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $notes = @"
-          Windows x64 dumphfdl 1.7.0 beta rebuild with the second text timestamp fix.
+          Windows x64 dumphfdl 1.7.0 beta rebuild with the third text timestamp fix.
 
           Fixed on Windows:
           - text timestamps now use a locale-independent YYYY-MM-DD HH:MM:SS layout
           - with --utc the timezone label is emitted explicitly as UTC
-          - local-time mode emits an explicit numeric UTC offset instead of relying on %Z
+          - local offsets use calendar arithmetic without _mkgmtime64 range limits
+          - zero local offset is UTC; sub-minute offsets retain seconds
+          - time conversions use separate checked structures
+          - millisecond rounding is retained
 
           Unchanged:
           - JSON receive timestamps
           - Airspy HF+ / Discovery support through SoapyAirspyHF
           - RTL-SDR support
 
-          The executable and bundled Soapy modules passed automated build/startup validation. Because this release rebuilds dumphfdl and the remaining issue was discovered on a real Windows installation, it is published as a prerelease pending Dick's live HFDL confirmation.
+          The formatter passed native Windows UCRT tests in debug and release modes. The executable and bundled Soapy modules passed portable-package validation and native PowerShell startup checks. This prerelease includes commit f6d10e7 and remains pending live HFDL reception confirmation.
           "@
 
-          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-text-timestamp-fix-v2 --title "dumphfdl 1.7.0 Windows x64 - timestamp fix v2 beta" --notes $notes --prerelease
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-text-timestamp-fix-v2 --title "dumphfdl 1.7.0 Windows x64 - timestamp fix v3 beta" --notes $notes --prerelease
