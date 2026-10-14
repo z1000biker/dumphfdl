@@ -307,8 +307,4 @@ jobs:
           The executable and bundled Soapy modules passed automated build/startup validation. Because this release rebuilds dumphfdl and the remaining issue was discovered on a real Windows installation, it is published as a prerelease pending Dick's live HFDL confirmation.
           "@
 
-          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME \
-            --target windows-text-timestamp-fix-v2 \
-            --title "dumphfdl 1.7.0 Windows x64 - timestamp fix v2 beta" \
-            --notes $notes \
-            --prerelease
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-text-timestamp-fix-v2 --title "dumphfdl 1.7.0 Windows x64 - timestamp fix v2 beta" --notes $notes --prerelease
