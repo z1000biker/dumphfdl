@@ -1,0 +1,352 @@
+name: Build Windows timestamp fix v3
+
+on:
+  push:
+    branches:
+      - windows-audio-input
+    paths:
+      - ".github/workflows/build-windows-timestamp-v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: v1.7.0-windows6-airspyhf-timestamp-v3-beta
+  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v3-beta.zip
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            python
+            make
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-glib2
+            mingw-w64-ucrt-x86_64-fftw
+            mingw-w64-ucrt-x86_64-libconfig
+            mingw-w64-ucrt-x86_64-soapysdr
+            mingw-w64-ucrt-x86_64-soapyrtlsdr
+            mingw-w64-ucrt-x86_64-rtl-sdr
+            mingw-w64-ucrt-x86_64-libusb
+            mingw-w64-ucrt-x86_64-zlib
+
+      - name: Build liquid-dsp 1.8.3
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cd "$RUNNER_TEMP"
+          git clone --depth 1 --branch v1.8.3 https://github.com/jgaeddert/liquid-dsp.git
+
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          timer = Path("liquid-dsp/src/core/src/timer.c")
+          s = timer.read_text(encoding="utf-8")
+
+          def sub_once(pattern, replacement, text, label, flags=0):
+              new_text, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one match, found {count}")
+              return new_text
+
+          s = sub_once(
+              r'(?m)^#include <sys/resource\.h>\r?$',
+              '#ifndef _WIN32\n#include <sys/resource.h>\n#endif',
+              s,
+              'liquid-dsp sys/resource.h patch',
+          )
+          s = sub_once(
+              r'(?m)^(\s*)struct rusage tic_rusage;\r?$',
+              r'#ifndef _WIN32\n\1struct rusage tic_rusage;\n#endif',
+              s,
+              'liquid-dsp tic_rusage patch',
+          )
+          s = sub_once(
+              r'(?m)^(\s*)getrusage\(RUSAGE_SELF, &_q->tic_rusage\);\r?$',
+              r'#ifdef _WIN32\n\1return liquid_error(LIQUID_EINT,"liquid_timer_tic(), RUSAGE timer is unavailable on Windows");\n#else\n\1getrusage(RUSAGE_SELF, &_q->tic_rusage);\n#endif',
+              s,
+              'liquid-dsp timer tic patch',
+          )
+          s = sub_once(
+              r'(?ms)^(\s*)struct rusage toc;\r?\n\s*getrusage\(RUSAGE_SELF, &toc\);\r?\n\s*// compute run time\r?\n\s*float time_s\s*=.*?^\s*return time_s \+ 1e-6f\*time_us;\r?$',
+              r'#ifdef _WIN32\n\1return liquid_error(LIQUID_EINT,"liquid_timer_toc(), RUSAGE timer is unavailable on Windows");\n#else\n\1struct rusage toc;\n\1getrusage(RUSAGE_SELF, &toc);\n\1// compute run time\n\1float time_s  = toc.ru_utime.tv_sec - _q->tic_rusage.ru_utime.tv_sec\n\1              + toc.ru_stime.tv_sec - _q->tic_rusage.ru_stime.tv_sec;\n\1float time_us = toc.ru_utime.tv_usec - _q->tic_rusage.ru_utime.tv_usec\n\1              + toc.ru_stime.tv_usec - _q->tic_rusage.ru_stime.tv_usec;\n\1return time_s + 1e-6f*time_us;\n#endif',
+              s,
+              'liquid-dsp timer toc patch',
+          )
+          timer.write_text(s, encoding="utf-8", newline="\n")
+
+          cmake = Path("liquid-dsp/CMakeLists.txt")
+          c = cmake.read_text(encoding="utf-8")
+          c = sub_once(
+              r'(?m)^(\s*)target_link_libraries\(\$\{target\} c m\)\r?$',
+              r'\1if(WIN32)\n\1    target_link_libraries(__TARGET__ m)\n\1else()\n\1    target_link_libraries(__TARGET__ c m)\n\1endif()',
+              c,
+              'liquid-dsp Windows libc link patch',
+          )
+          c = c.replace('__TARGET__', '${target}')
+          cmake.write_text(c, encoding="utf-8", newline="\n")
+          print("Patched liquid-dsp timer and Windows libc link")
+          PY
+
+          cmake -S liquid-dsp -B liquid-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/ucrt64 \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_AUTOTESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF \
+            -DENABLE_LOGGING=OFF \
+            -DENABLE_TIMESTAMPS=OFF
+          cmake --build liquid-build
+          cmake --install liquid-build
+
+      - name: Build libacars 2.2.1
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cd "$RUNNER_TEMP"
+          git clone --depth 1 --branch v2.2.1 https://github.com/szpajder/libacars.git
+          cmake -S libacars -B libacars-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/ucrt64 \
+            -DZLIB=ON -DLIBXML2=OFF -DJANSSON=OFF
+          cmake --build libacars-build
+          cmake --install libacars-build
+
+      - name: Build libairspyhf
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cd "$RUNNER_TEMP"
+          git clone https://github.com/airspy/airspyhf.git
+          cd airspyhf
+          git checkout 24fe8ffcb00b14f827268bbad89ae1392de055e5
+          cd ..
+          cmake -S airspyhf/libairspyhf -B airspyhf-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/ucrt64
+          cmake --build airspyhf-build
+          cmake --install airspyhf-build
+
+      - name: Build SoapyAirspyHF
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cd "$RUNNER_TEMP"
+          git clone https://github.com/pothosware/SoapyAirspyHF.git
+          cd SoapyAirspyHF
+          git checkout 0b3daf0b47c3c1d0857c873bb184f6a86a37333c
+          cd ..
+          cmake -S SoapyAirspyHF -B soapyairspyhf-build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/ucrt64 \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          cmake --build soapyairspyhf-build
+          cmake --install soapyairspyhf-build
+
+      - name: Configure and build dumphfdl
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build-win -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/ucrt64 \
+            -DSOAPYSDR=ON \
+            -DETSY_STATSD=OFF \
+            -DSQLITE=OFF \
+            -DZMQ=OFF \
+            -DRDKAFKA=OFF \
+            -DPROFILING=OFF 2>&1 | tee "$RUNNER_TEMP/dumphfdl-configure.txt"
+          grep -Eq "soapysdr:.*requested: ON, enabled: TRUE" "$RUNNER_TEMP/dumphfdl-configure.txt"
+          cmake --build build-win
+          ./build-win/src/dumphfdl.exe --help 2>&1 | tee "$RUNNER_TEMP/dumphfdl-help.txt"
+          grep -q -- "--soapysdr" "$RUNNER_TEMP/dumphfdl-help.txt"
+
+      - name: Test timestamps on native Windows UCRT
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          python ci/test-windows-text-timestamp.py | tee "$RUNNER_TEMP/timestamp-crt-tests.txt"
+
+      - name: Assemble portable package
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          PKG="$GITHUB_WORKSPACE/package"
+          rm -rf "$PKG"
+          mkdir -p "$PKG/SoapySDR/modules0.8"
+
+          cp build-win/src/dumphfdl.exe "$PKG/"
+          cp /ucrt64/bin/SoapySDRUtil.exe "$PKG/"
+          cp etc/systable.conf "$PKG/"
+          cp LICENSE "$PKG/"
+          cp windows/*.ps1 "$PKG/"
+          cp windows/README-WINDOWS.txt "$PKG/"
+          if [[ -f windows/README-AIRSPYHF.txt ]]; then cp windows/README-AIRSPYHF.txt "$PKG/"; fi
+          if [[ -f windows/README-AUDIO.txt ]]; then cp windows/README-AUDIO.txt "$PKG/"; fi
+
+          while IFS= read -r module; do
+            cp -f "$module" "$PKG/SoapySDR/modules0.8/"
+          done < <(find /ucrt64/lib/SoapySDR -type f -iname "*.dll")
+
+          copy_deps() {
+            local queue=("$@")
+            while (("${#queue[@]}" > 0)); do
+              local item="${queue[0]}"
+              queue=("${queue[@]:1}")
+              while IFS= read -r dep; do
+                [[ -f "$dep" ]] || continue
+                case "$dep" in
+                  /ucrt64/bin/*.dll)
+                    local base="$(basename "$dep")"
+                    if [[ ! -f "$PKG/$base" ]]; then
+                      cp "$dep" "$PKG/$base"
+                      queue+=("$PKG/$base")
+                    fi
+                    ;;
+                esac
+              done < <(ldd "$item" | awk '/=> \/ucrt64\/bin\// {print $3}')
+            done
+          }
+
+          seeds=("$PKG/dumphfdl.exe" "$PKG/SoapySDRUtil.exe")
+          while IFS= read -r module; do seeds+=("$module"); done < <(find "$PKG/SoapySDR/modules0.8" -type f -iname "*.dll")
+          copy_deps "${seeds[@]}"
+
+          cat > "$PKG/TIMESTAMP-FIX-V3.txt" <<'EOF'
+          dumphfdl 1.7.0 Windows timestamp fix v3
+
+          This beta rebuild uses checked time conversions and calendar-based local offsets.
+
+          With --utc:
+            YYYY-MM-DD HH:MM:SS UTC
+
+          Without --utc:
+            YYYY-MM-DD HH:MM:SS UTC+HH:MM
+            (or UTC-HH:MM as appropriate; zero offset is UTC)
+            Sub-minute offsets retain seconds as UTC+HH:MM:SS.
+            --milliseconds adds .mmm after HH:MM:SS.
+
+          The Windows text timestamp is no longer locale-dependent and does not
+          rely on strftime("%Z") for the UTC label.
+
+          Native Windows UCRT timestamp tests passed in debug and release modes.
+          JSON timestamps are unchanged.
+          Airspy HF+ / Discovery and RTL-SDR support are retained.
+          EOF
+
+      - name: Validate portable package
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          PKG="$GITHUB_WORKSPACE/package"
+          export PATH="$PKG:$PATH"
+          export SOAPY_SDR_PLUGIN_PATH="$PKG/SoapySDR/modules0.8"
+          cd "$PKG"
+
+          ./SoapySDRUtil.exe --info 2>&1 | tee "$RUNNER_TEMP/portable-soapy-info.txt"
+          grep -qi "airspyhf" "$RUNNER_TEMP/portable-soapy-info.txt"
+          grep -qi "rtlsdr" "$RUNNER_TEMP/portable-soapy-info.txt"
+
+          ./dumphfdl.exe --help 2>&1 | tee "$RUNNER_TEMP/portable-help.txt"
+          grep -q -- "--soapysdr" "$RUNNER_TEMP/portable-help.txt"
+          grep -q -- "--utc" "$RUNNER_TEMP/portable-help.txt"
+          grep -q -- "--audio-device" "$RUNNER_TEMP/portable-help.txt"
+          grep -q -- "--list-audio-devices" "$RUNNER_TEMP/portable-help.txt"
+
+          ./dumphfdl.exe --list-audio-devices 2>&1 | tee "$RUNNER_TEMP/audio-devices.txt"
+
+          python - <<'PY'
+          import math, struct
+          rate = 48000
+          with open("audio-fixture.s16", "wb") as f:
+              for n in range(rate):
+                  sample = int(12000 * math.sin(2 * math.pi * 1440 * n / rate))
+                  f.write(struct.pack("<h", sample))
+          PY
+
+          ./dumphfdl.exe --utc --iq-file audio-fixture.s16 --sample-format S16 --sample-rate 48000 --centerfreq 10081 10081 > "$RUNNER_TEMP/audio-fixture-out.txt" 2>&1
+          test $? -eq 0
+
+          if find . -type f \( -iname "*.exe" -o -iname "*.dll" \) -print0 |
+             xargs -0 -n1 ldd 2>/dev/null | grep -qi "msys-2.0.dll"; then
+            echo "ERROR: package depends on MSYS runtime"
+            exit 1
+          fi
+
+      - name: Validate native PowerShell startup
+        shell: powershell
+        run: |
+          Push-Location ".\package"
+          try {
+            $helpOut = Join-Path $env:RUNNER_TEMP "native-help.out"
+            $helpErr = Join-Path $env:RUNNER_TEMP "native-help.err"
+            $exePath = Join-Path (Get-Location) "dumphfdl.exe"
+            $process = Start-Process -FilePath $exePath -ArgumentList "--help" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $helpOut -RedirectStandardError $helpErr
+            $help = (Get-Content $helpOut -Raw) + (Get-Content $helpErr -Raw)
+            if ($process.ExitCode -ne 0) { throw "dumphfdl native startup failed: $help" }
+            if ($help -notmatch "--utc") { throw "dumphfdl help is incomplete" }
+            $env:SOAPY_SDR_PLUGIN_PATH = Join-Path (Get-Location) "SoapySDR\modules0.8"
+            $infoOut = Join-Path $env:RUNNER_TEMP "native-soapy.out"
+            $infoErr = Join-Path $env:RUNNER_TEMP "native-soapy.err"
+            $exePath = Join-Path (Get-Location) "SoapySDRUtil.exe"
+            $process = Start-Process -FilePath $exePath -ArgumentList "--info" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $infoOut -RedirectStandardError $infoErr
+            $info = (Get-Content $infoOut -Raw) + (Get-Content $infoErr -Raw)
+            if ($process.ExitCode -ne 0) { throw "SoapySDRUtil native startup failed: $info" }
+            if ($info -notmatch "airspyhf" -or $info -notmatch "rtlsdr") { throw "Native Soapy modules are missing: $info" }
+            Write-Output "PASS: dumphfdl.exe and SoapySDRUtil.exe start from native PowerShell with bundled DLLs and modules"
+          } finally {
+            Pop-Location
+          }
+
+      - name: Create ZIP and checksum
+        shell: powershell
+        run: |
+          if (Test-Path $env:ARCHIVE_NAME) { Remove-Item $env:ARCHIVE_NAME -Force }
+          Compress-Archive -Path ".\package\*" -DestinationPath $env:ARCHIVE_NAME -CompressionLevel Optimal
+          Get-FileHash $env:ARCHIVE_NAME -Algorithm SHA256 | Format-List
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v3-beta
+          path: ${{ env.ARCHIVE_NAME }}
+          if-no-files-found: error
+
+      - name: Publish prerelease
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = @"
+          Windows x64 dumphfdl 1.7.0 beta with native sound-card / USB audio input for conventional HF receivers.
+
+          Added:
+          - --list-audio-devices
+          - --audio-device <index|name>
+          - mono 16-bit Windows WinMM capture, default 48000 Hz
+          - S16 real-sample input support
+          - list-audio-devices.ps1 and receive-audio-example.ps1
+          - README-AUDIO.txt
+
+          Usage example:
+          dumphfdl.exe --utc --system-table .\systable.conf --audio-device 0 --sample-rate 48000 10081
+
+          The receiver must be in USB mode and tuned to the HFDL assigned frequency. Audio mode intentionally supports one HFDL channel at a time. Existing SoapySDR, Airspy HF+, RTL-SDR, I/Q file and Windows timestamp behavior is retained.
+
+          CI validates compilation, the new command-line interface, S16 real-audio DSP ingestion using a synthetic 1440 Hz fixture, portable DLL packaging, and existing Soapy modules. Live decoding through a physical conventional receiver and USB audio adapter is still required before promoting this feature from beta.
+          "@
+
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-audio-input --title "dumphfdl 1.7.0 Windows x64 - timestamp fix v3 beta" --notes $notes --prerelease
