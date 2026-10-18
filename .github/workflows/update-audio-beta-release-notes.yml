@@ -55,6 +55,14 @@ jobs:
           The setup successfully decoded live HFDL traffic including uplink and downlink LPDUs, ACARS data, logon confirmation, and aircraft performance/position data.
 
           This confirms that dumphfdl can now decode HFDL from a conventional HF receiver through a USB audio device; an SDR is not required for this input mode.
+
+          ## Simultaneous SDR + audio operation
+
+          Further real-world testing confirmed that the conventional-receiver audio input can run at the same time as an RTL-SDR Blog V4 on the same Windows PC.
+
+          In the tested setup, placing both the RTL-SDR Blog V4 and the HFDL USB audio adapter on the same multi-port USB hub caused the SDR to stall. Moving the HFDL USB audio adapter to a separate USB port allowed both to run normally at the same time.
+
+          For simultaneous SDR and HFDL audio operation, separate USB ports are therefore recommended where possible rather than connecting both devices through the same USB hub.
           EOF
 
           gh release edit v1.7.0-windows7-audio-beta \
