@@ -26,6 +26,9 @@
 #include "ac_data.h"            // ac_data_create, ac_data_destroy
 #include "input-common.h"       // sample_format_t, input_create
 #include "input-helpers.h"      // sample_format_from_string
+#ifdef _WIN32
+#include "input-audio.h"        // audio_input_list_devices
+#endif
 #include "output-common.h"      // output_*, fmtr_*
 #include "kvargs.h"             // kvargs
 #include "hfdl.h"               // hfdl_channel_create
@@ -250,6 +253,11 @@ static void usage() {
 			"%*sdumphfdl [output_options] --soapysdr <device_string> [soapysdr_options] <freq_1> [<freq_2> [...]]\n",
 			IND(1), "");
 #endif
+#ifdef _WIN32
+	fprintf(stderr, "\nWindows sound-card / USB audio input:\n\n"
+			"%*sdumphfdl [output_options] --audio-device <index|name> [--sample-rate <rate>] <freq>\n",
+			IND(1), "");
+#endif
 	fprintf(stderr, "\nRead I/Q samples from file:\n\n"
 			"%*sdumphfdl [output_options] --iq-file <input_iq_file> [iq_file_options] <freq_1> [<freq_2> [...]]\n",
 			IND(1), "");
@@ -277,13 +285,22 @@ static void usage() {
 	describe_option("--freq-offset <float>", "Frequency offset in kHz (to be used with upconverters)", 1);
 	describe_option("--antenna <string>", "Set antenna port selection (default: RX)", 1);
 #endif
+#ifdef _WIN32
+	fprintf(stderr, "\nwindows_audio_options:\n");
+	describe_option("--list-audio-devices", "List Windows recording devices and exit", 1);
+	describe_option("--audio-device <index|name>", "Capture mono 16-bit audio from a Windows recording device", 1);
+	describe_option("--sample-rate <integer>", "Audio sample rate in Hz (default: 48000)", 1);
+	fprintf(stderr, "%*sReceiver must be in USB mode and tuned to the specified HFDL channel.\n",
+			USAGE_OPT_NAME_COLWIDTH, "");
+#endif
 	fprintf(stderr, "\niq_file_options:\n");
 	describe_option("--iq-file <string>", "Read I/Q samples from file (use \"-\" to read from standard input)", 1);
 	describe_option("--sample-rate <integer>", "Set sampling rate (samples per second)", 1);
 	describe_option("--centerfreq <float>", "Center frequency of the input data, in kHz (default: auto)", 1);
 	describe_option("--sample-format <sample_format>", "Input sample format. Supported formats:", 1);
 	describe_option("CU8", "8-bit unsigned (eg. recorded with rtl_sdr)", 2);
-	describe_option("CS16", "16-bit signed, little-endian (eg. recorded with sdrplay)", 2);
+	describe_option("CS16", "16-bit signed complex, little-endian (eg. recorded with sdrplay)", 2);
+	describe_option("S16", "16-bit signed mono/real samples (eg. demodulated USB audio)", 2);
 	describe_option("CF32", "32-bit float, little-endian (eg. Airspy HF+)", 2);
 	describe_option("--read-buffer-size <integer>", "Number of bytes to read from file in one batch", 1);
 
@@ -339,6 +356,10 @@ int32_t main(int32_t argc, char **argv) {
 #ifdef WITH_SOAPYSDR
 #define OPT_SOAPYSDR 11
 #endif
+#ifdef _WIN32
+#define OPT_AUDIO_DEVICE 12
+#define OPT_LIST_AUDIO_DEVICES 13
+#endif
 
 #define OPT_SAMPLE_FORMAT 20
 #define OPT_SAMPLE_RATE 21
@@ -392,6 +413,10 @@ int32_t main(int32_t argc, char **argv) {
 		{ "iq-file",            required_argument,  NULL,   OPT_IQ_FILE },
 #ifdef WITH_SOAPYSDR
 		{ "soapysdr",           required_argument,  NULL,   OPT_SOAPYSDR },
+#endif
+#ifdef _WIN32
+		{ "audio-device",       required_argument,  NULL,   OPT_AUDIO_DEVICE },
+		{ "list-audio-devices", no_argument,        NULL,   OPT_LIST_AUDIO_DEVICES },
 #endif
 		{ "sample-format",      required_argument,  NULL,   OPT_SAMPLE_FORMAT },
 		{ "sample-rate",        required_argument,  NULL,   OPT_SAMPLE_RATE },
@@ -463,6 +488,15 @@ int32_t main(int32_t argc, char **argv) {
 				input_cfg->source = optarg;
 				input_cfg->type = INPUT_TYPE_SOAPYSDR;
 				break;
+#endif
+#ifdef _WIN32
+			case OPT_AUDIO_DEVICE:
+				input_cfg->source = optarg;
+				input_cfg->type = INPUT_TYPE_AUDIO;
+				break;
+			case OPT_LIST_AUDIO_DEVICES:
+				audio_input_list_devices();
+				return 0;
 #endif
 			case OPT_SAMPLE_FORMAT:
 				input_cfg->sfmt = sample_format_from_string(optarg);
@@ -639,6 +673,29 @@ int32_t main(int32_t argc, char **argv) {
 			return 1;
 		}
 	}
+
+#ifdef _WIN32
+	if(input_cfg->type == INPUT_TYPE_AUDIO) {
+		if(channel_cnt != 1) {
+			fprintf(stderr, "Windows audio input supports exactly one HFDL channel at a time\n");
+			return 1;
+		}
+		if(input_cfg->sample_rate < 0) {
+			input_cfg->sample_rate = 48000;
+		}
+		/*
+		 * A conventional receiver is tuned to the HFDL assigned frequency.
+		 * Its USB audio contains the HFDL PSK carrier at +1440 Hz, so using
+		 * the channel frequency as the virtual center frequency lets the
+		 * existing channelizer select the correct audio component.
+		 */
+		if(input_cfg->centerfreq < 0) {
+			input_cfg->centerfreq = frequencies[0];
+			fprintf(stderr, "%s: audio virtual center frequency: %.3f kHz\n",
+					input_cfg->source, HZ_TO_KHZ(input_cfg->centerfreq));
+		}
+	}
+#endif
 
 	if(input_cfg->sample_rate < HFDL_SYMBOL_RATE * SPS) {
 		fprintf(stderr, "Sample rate must be greater or equal to %d\n", HFDL_SYMBOL_RATE * SPS);
