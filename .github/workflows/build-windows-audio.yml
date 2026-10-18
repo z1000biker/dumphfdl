@@ -1,19 +1,19 @@
-name: Build Windows timestamp fix v3
+name: Build Windows conventional receiver audio beta
 
 on:
   push:
     branches:
       - windows-audio-input
     paths:
-      - ".github/workflows/build-windows-timestamp-v2.yml"
+      - ".github/workflows/build-windows-audio.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  RELEASE_TAG: v1.7.0-windows6-airspyhf-timestamp-v3-beta
-  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v3-beta.zip
+  RELEASE_TAG: v1.7.0-windows7-audio-beta
+  ARCHIVE_NAME: dumphfdl-1.7.0-windows-x64-conventional-audio-beta.zip
 
 jobs:
   build:
@@ -321,7 +321,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dumphfdl-1.7.0-windows-x64-airspyhf-timestamp-v3-beta
+          name: dumphfdl-1.7.0-windows-x64-conventional-audio-beta
           path: ${{ env.ARCHIVE_NAME }}
           if-no-files-found: error
 
@@ -349,4 +349,4 @@ jobs:
           CI validates compilation, the new command-line interface, S16 real-audio DSP ingestion using a synthetic 1440 Hz fixture, portable DLL packaging, and existing Soapy modules. Live decoding through a physical conventional receiver and USB audio adapter is still required before promoting this feature from beta.
           "@
 
-          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-audio-input --title "dumphfdl 1.7.0 Windows x64 - timestamp fix v3 beta" --notes $notes --prerelease
+          gh release create $env:RELEASE_TAG $env:ARCHIVE_NAME --target windows-audio-input --title "dumphfdl 1.7.0 Windows x64 - conventional receiver audio beta" --notes $notes --prerelease
