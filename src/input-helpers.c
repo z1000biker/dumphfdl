@@ -56,6 +56,25 @@ static void convert_cs16(struct input *input, void *inbuf, size_t len,
 	}
 }
 
+static void convert_s16(struct input *input, void *inbuf, size_t len,
+		float complex *outbuf) {
+	if(UNLIKELY(len % input->bytes_per_sample != 0)) {
+		debug_print(D_SDR, "Warning: buf len %zu is not a multiple of %d, truncating\n",
+				len, input->bytes_per_sample);
+		len -= (len % input->bytes_per_sample);
+	}
+	if(UNLIKELY(len == 0)) {
+		return;
+	}
+	int16_t *shortbuf = inbuf;
+	size_t sample_cnt = len / sizeof(int16_t);
+	float const full_scale = input->full_scale;
+	ASSERT(full_scale > 0.f);
+	for(size_t i = 0; i < sample_cnt; i++) {
+		outbuf[i] = CMPLXF((float)shortbuf[i] / full_scale, 0.f);
+	}
+}
+
 static void convert_cu8(struct input *input, void *inbuf, size_t len,
 		float complex *outbuf) {
 	if(UNLIKELY(len % input->bytes_per_sample != 0)) {
@@ -119,6 +138,12 @@ static struct sample_format_params const sample_format_params[] = {
 		.sample_size = 2 * sizeof(int16_t),
 		.full_scale = (float)SHRT_MAX + 0.5f,
 		.convert_fun = convert_cs16
+	},
+	[SFMT_S16] = {
+		.name = "S16",
+		.sample_size = sizeof(int16_t),
+		.full_scale = (float)SHRT_MAX + 0.5f,
+		.convert_fun = convert_s16
 	},
 	[SFMT_CF32] = {
 		.name = "CF32",
