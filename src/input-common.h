@@ -10,6 +10,9 @@ typedef enum {
 #ifdef WITH_SOAPYSDR
 	INPUT_TYPE_SOAPYSDR,
 #endif
+#ifdef _WIN32
+	INPUT_TYPE_AUDIO,
+#endif
 	INPUT_TYPE_FILE,
 	INPUT_TYPE_MAX
 } input_type;
@@ -18,6 +21,7 @@ typedef enum {
 	SFMT_UNDEF = 0,
 	SFMT_CU8,
 	SFMT_CS16,
+	SFMT_S16,
 	SFMT_CF32,
 	SFMT_MAX
 } sample_format;
