@@ -9,11 +9,17 @@
 #ifdef WITH_SOAPYSDR
 #include "input-soapysdr.h"     // soapysdr_input_vtable
 #endif
+#ifdef _WIN32
+#include "input-audio.h"        // audio_input_vtable
+#endif
 
 static struct input_vtable *input_vtables[] = {
 	[INPUT_TYPE_FILE] = &file_input_vtable,
 #ifdef WITH_SOAPYSDR
 	[INPUT_TYPE_SOAPYSDR] = &soapysdr_input_vtable,
+#endif
+#ifdef _WIN32
+	[INPUT_TYPE_AUDIO] = &audio_input_vtable,
 #endif
 	[INPUT_TYPE_UNDEF] = NULL
 };
