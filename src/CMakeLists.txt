@@ -61,6 +61,10 @@ if(DATADUMPS)
 	list(APPEND dumphfdl_extra_sources dumpfile.c)
 endif()
 
+if(WIN32)
+	list(APPEND dumphfdl_extra_sources input-audio.c)
+endif()
+
 find_package(PkgConfig REQUIRED)
 
 find_package(LiquidDSP REQUIRED)
@@ -315,7 +319,7 @@ target_link_libraries (dumphfdl
 )
 
 if(WIN32)
-	target_link_libraries(dumphfdl ws2_32)
+	target_link_libraries(dumphfdl ws2_32 winmm)
 endif()
 
 install(TARGETS dumphfdl
