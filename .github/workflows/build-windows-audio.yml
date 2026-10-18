@@ -6,6 +6,16 @@ on:
       - windows-audio-input
     paths:
       - ".github/workflows/build-windows-audio.yml"
+      - "src/input-audio.c"
+      - "src/input-audio.h"
+      - "src/input-common.c"
+      - "src/input-common.h"
+      - "src/input-helpers.c"
+      - "src/main.c"
+      - "src/CMakeLists.txt"
+      - "windows/README-AUDIO.txt"
+      - "windows/list-audio-devices.ps1"
+      - "windows/receive-audio-example.ps1"
   workflow_dispatch:
 
 permissions:
