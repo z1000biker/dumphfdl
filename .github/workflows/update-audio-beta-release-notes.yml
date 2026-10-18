@@ -1,0 +1,62 @@
+name: Update audio beta validation notes
+
+on:
+  push:
+    branches:
+      - windows-audio-input
+    paths:
+      - ".github/workflows/update-audio-beta-release-notes.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  update-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          Windows x64 dumphfdl 1.7.0 beta with native sound-card / USB audio input for conventional HF receivers.
+
+          Added:
+          - `--list-audio-devices`
+          - `--audio-device <index|name>`
+          - mono 16-bit Windows WinMM capture, default 48000 Hz
+          - S16 real-sample input support
+          - `list-audio-devices.ps1` and `receive-audio-example.ps1`
+          - `README-AUDIO.txt`
+
+          Usage example:
+
+          ```text
+          dumphfdl.exe --utc --system-table .\systable.conf --audio-device 0 --sample-rate 48000 10081
+          ```
+
+          The receiver must be in USB mode and tuned to the HFDL assigned frequency. Audio mode intentionally supports one HFDL channel at a time. Existing SoapySDR, Airspy HF+, RTL-SDR, I/Q file and Windows timestamp behavior is retained.
+
+          CI validates compilation, the new command-line interface, S16 real-audio DSP ingestion using a synthetic 1440 Hz fixture, portable DLL packaging, and existing Soapy modules.
+
+          ## Real-world validation
+
+          The Windows conventional-receiver audio path has now been validated with a real non-SDR setup:
+
+          - XHDATA D-808 conventional HF receiver
+          - external loop antenna
+          - analogue audio/headphone output
+          - splitter / USB audio adapter
+          - Windows PC
+          - 48 kHz mono audio input
+          - HFDL reception on 8942 kHz from Shannon, Ireland
+
+          The setup successfully decoded live HFDL traffic including uplink and downlink LPDUs, ACARS data, logon confirmation, and aircraft performance/position data.
+
+          This confirms that dumphfdl can now decode HFDL from a conventional HF receiver through a USB audio device; an SDR is not required for this input mode.
+          EOF
+
+          gh release edit v1.7.0-windows7-audio-beta \
+            --repo z1000biker/dumphfdl \
+            --notes-file release-notes.md
