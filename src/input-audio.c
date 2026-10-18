@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <winsock2.h>
 #include <windows.h>
 #include <mmsystem.h>
 #include <liquid/liquid.h>      // cbuffercf_*
@@ -324,7 +325,7 @@ shutdown:
 	return NULL;
 }
 
-struct input_vtable const audio_input_vtable = {
+struct input_vtable audio_input_vtable = {
 	.create = audio_input_create,
 	.init = audio_input_init,
 	.destroy = audio_input_destroy,
